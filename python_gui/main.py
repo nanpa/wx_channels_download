@@ -9,13 +9,13 @@ import threading
 import time
 import urllib.error
 import urllib.request
-import webbrowser
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
 APP_NAME = "WxChannelsDownload"
+GUI_VERSION = "0.92"
 API_URL = "http://127.0.0.1:2022"
 HEALTH_URL = f"{API_URL}/api/status"
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -277,44 +277,34 @@ class Launcher(tk.Tk):
         self.backend = BackendManager()
         self.status = tk.StringVar(value="未启动")
         self.download_dir = tk.StringVar(value=self.backend.download_dir())
-        self.task_summary = tk.StringVar(value="启动内核后将自动显示下载任务")
+        self.task_summary = tk.StringVar(value="正在连接下载服务……")
         self.selected_task_text = tk.StringVar(value="请选择一个下载任务")
         self.delete_files = tk.BooleanVar(value=False)
         self._tasks: dict[str, dict] = {}
         self._tasks_loading = False
-        self._poll_attempts = 0
         self._closing = False
 
         self.title("视频号下载工具")
-        self.geometry("1000x680")
-        self.minsize(820, 560)
+        self.geometry("1000x630")
+        self.minsize(820, 520)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build_ui()
-        self.after(250, self.refresh_status)
+        self.after(250, self.start_backend)
+        self.after(500, self.refresh_status)
 
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=18)
         root.pack(fill="both", expand=True)
 
         ttk.Label(root, text="视频号下载工具", font=("Microsoft YaHei UI", 20, "bold")).pack(anchor="w")
-        ttk.Label(root, text="本地下载管理器 · Go 下载内核在本机后台运行", foreground="#666666").pack(anchor="w", pady=(4, 14))
+        ttk.Label(root, text="本地下载管理器", foreground="#666666").pack(anchor="w", pady=(4, 14))
 
         status_frame = ttk.LabelFrame(root, text="运行状态", padding=10)
         status_frame.pack(fill="x")
         ttk.Label(status_frame, textvariable=self.status, font=("Microsoft YaHei UI", 12)).pack(anchor="w")
 
-        controls = ttk.Frame(root)
-        controls.pack(fill="x", pady=(12, 4))
-        self.start_button = ttk.Button(controls, text="启动内核", command=self.start_backend)
-        self.start_button.pack(side="left", padx=(0, 8))
-        ttk.Button(controls, text="打开管理页面", command=self.open_admin).pack(side="left", padx=(0, 8))
-        self.stop_button = ttk.Button(controls, text="安全停止", command=self.stop_backend)
-        self.stop_button.pack(side="left", padx=(0, 8))
-        ttk.Button(controls, text="查看日志", command=self.open_log).pack(side="left", padx=(0, 8))
-        ttk.Button(controls, text="数据目录", command=lambda: open_path(self.backend.workdir)).pack(side="left")
-
         folder = ttk.LabelFrame(root, text="默认下载文件夹（仅影响之后新建的任务）", padding=8)
-        folder.pack(fill="x", pady=(8, 10))
+        folder.pack(fill="x", pady=(12, 10))
         ttk.Entry(folder, textvariable=self.download_dir, state="readonly").grid(row=0, column=0, sticky="ew")
         ttk.Button(folder, text="选择文件夹…", command=self.choose_download_dir).grid(row=0, column=1, padx=(8, 0))
         ttk.Button(folder, text="打开文件夹", command=self.open_download_dir).grid(row=0, column=2, padx=(8, 0))
@@ -348,9 +338,22 @@ class Launcher(tk.Tk):
         ttk.Button(detail, text="打开所在文件夹", command=self.open_selected_folder).grid(row=2, column=0, sticky="w")
         ttk.Checkbutton(detail, text="同时删除本地文件", variable=self.delete_files).grid(row=2, column=1, padx=(12, 0))
         ttk.Button(detail, text="删除选中任务", command=self.delete_selected_task).grid(row=2, column=2, padx=(12, 0))
-        ttk.Button(detail, text="最小化", command=self.iconify).grid(row=2, column=3, sticky="e")
+        ttk.Button(detail, text="关于", command=self.show_about).grid(row=2, column=3, sticky="e")
         detail.columnconfigure(0, weight=1)
         ttk.Label(root, text="删除记录不会默认删除视频文件；勾选“同时删除本地文件”才会移除已下载文件。", foreground="#9a6700").pack(anchor="w", pady=(9, 0))
+
+    def show_about(self) -> None:
+        messagebox.showinfo(
+            "关于视频号下载工具",
+            f"视频号下载工具 GUI\n版本 {GUI_VERSION}\n\n"
+            "GUI 作者：Bob Wang\n"
+            "Copyright © 2026 Bob Wang\n\n"
+            "下载核心：wx_channels_download\n"
+            "核心作者：ltaoo\n"
+            "Copyright © 2025 ltaoo\n\n"
+            "核心采用 MIT License，并附加 Commons Clause 1.0 条款。\n"
+            "完整许可证文本请见程序目录中的 LICENSE 文件。",
+        )
 
     def choose_download_dir(self) -> None:
         directory = filedialog.askdirectory(title="选择默认下载文件夹", initialdir=self.download_dir.get() or str(Path.home()))
@@ -363,7 +366,7 @@ class Launcher(tk.Tk):
             messagebox.showerror("保存失败", str(exc))
             return
         self.download_dir.set(str(Path(directory)))
-        messagebox.showinfo("已保存", "默认下载文件夹已保存。\n\n请安全停止并重新启动内核后，新建下载任务会使用此文件夹。")
+        messagebox.showinfo("已保存", "默认下载文件夹已保存。\n\n请退出并重新打开程序后，新建下载任务会使用此文件夹。")
 
     def open_download_dir(self) -> None:
         directory = self.download_dir.get()
@@ -461,70 +464,38 @@ class Launcher(tk.Tk):
                 self.after(0, self.refresh_tasks)
         threading.Thread(target=worker, daemon=True).start()
 
-    def run_async(self, operation, success_message: str) -> None:
-        self.start_button.configure(state="disabled")
-        self.stop_button.configure(state="disabled")
-
-        def worker() -> None:
-            try:
-                operation()
-            except Exception as exc:
-                error_message = str(exc)
-                self.after(0, lambda: messagebox.showerror("操作失败", error_message))
-            else:
-                self.after(0, lambda: self.status.set(success_message))
-            finally:
-                self.after(0, lambda: self.start_button.configure(state="normal"))
-                self.after(0, lambda: self.stop_button.configure(state="normal"))
-
-        threading.Thread(target=worker, daemon=True).start()
-
     def start_backend(self) -> None:
-        self.status.set("正在启动内核……")
-        self._poll_attempts = 0
-        self.run_async(self.backend.start, "已发出启动请求")
-        self.after(500, self.poll_until_ready)
-
-    def poll_until_ready(self) -> None:
-        if self.backend.is_ready():
-            self.status.set("运行中 · http://127.0.0.1:2022")
+        if self.backend.is_ready(timeout=0.25):
+            self.status.set("运行中")
             self.download_dir.set(self.backend.download_dir())
             self.refresh_tasks()
             return
-        self._poll_attempts += 1
-        if self._poll_attempts < 60:
-            self.after(500, self.poll_until_ready)
-        else:
-            self.status.set("启动超时，请查看日志")
-
-    def stop_backend(self) -> None:
-        self.status.set("正在安全停止并恢复系统代理……")
-        self.run_async(self.backend.stop, "已停止")
+        self.status.set("正在启动内核……")
+        def worker() -> None:
+            try:
+                self.backend.start()
+            except Exception as exc:
+                self.after(0, lambda: self.status.set(f"启动失败：{exc}"))
+                return
+            deadline = time.monotonic() + 30
+            while not self.backend.is_ready(timeout=0.5) and time.monotonic() < deadline:
+                time.sleep(0.5)
+            if self.backend.is_ready(timeout=0.5):
+                self.after(0, lambda: self.status.set("运行中"))
+                self.after(0, lambda: self.download_dir.set(self.backend.download_dir()))
+                self.after(0, self.refresh_tasks)
+            else:
+                self.after(0, lambda: self.status.set("启动超时，请重新打开程序"))
+        threading.Thread(target=worker, daemon=True).start()
 
     def refresh_status(self) -> None:
         if not self._closing and self.backend.is_ready(timeout=0.25):
-            self.status.set("运行中 · http://127.0.0.1:2022")
+            self.status.set("运行中")
             self.refresh_tasks()
         self.after(1500, self.refresh_status)
 
-    def open_admin(self) -> None:
-        if not self.backend.is_ready():
-            messagebox.showwarning("服务未就绪", "请先启动内核，等待状态变为“运行中”。")
-            return
-        webbrowser.open(API_URL, new=2)
-
-    def open_log(self) -> None:
-        self.backend.workdir.mkdir(parents=True, exist_ok=True)
-        if not self.backend.log.exists():
-            self.backend.log.touch()
-        open_path(self.backend.log)
-
     def on_close(self) -> None:
-        if self.backend.is_ready() and messagebox.askyesno(
-            "退出程序",
-            "退出时是否同时安全停止内核？\n\n"
-            "选择“否”将只关闭启动器，后台服务会继续运行。",
-        ):
+        if self.backend.is_ready():
             self._closing = True
             self.withdraw()
 

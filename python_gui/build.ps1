@@ -17,6 +17,7 @@ try {
         --name WxChannelsDownload `
         --add-binary "core\wx_channels_core.exe;core" `
         --add-data "default-config.yaml;." `
+        --add-data "..\LICENSE;." `
         main.py
 }
 finally {
