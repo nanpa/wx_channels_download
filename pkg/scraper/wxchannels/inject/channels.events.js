@@ -12,6 +12,43 @@
     throw new Error("eventbus.js must be loaded before channels.events.js");
   }
 
+  // The WeChat application bundle can emit its initial feed response while the
+  // page-specific script is still loading. Retain that first response so the
+  // listener registered a few milliseconds later receives it as well; without
+  // this, the first visit shows a download button but has no video to download
+  // until the user refreshes the page.
+  var stickyEvents = {
+    "channels:PCFlowLoaded": true,
+    "channels:RecommendFeedsLoaded": true,
+    "channels:OnFeedProfileLoaded": true,
+    "channels:HomeFeedChanged": true,
+  };
+  var stickyPayloads = {};
+  var rawEmit = WXE.emit;
+  function emitWithStickyPayload(event, payload) {
+    if (stickyEvents[event]) {
+      stickyPayloads[event] = payload;
+    }
+    return rawEmit(event, payload);
+  }
+  WXE.emit = emitWithStickyPayload;
+  // utils.js copied emit before this extension was loaded, so update its
+  // reference too. The WeChat bundle emits through WXU.
+  WXU.emit = emitWithStickyPayload;
+
+  function onStickyEvent(event, handler) {
+    WXE.on(event, handler);
+    if (Object.prototype.hasOwnProperty.call(stickyPayloads, event)) {
+      var payload = stickyPayloads[event];
+      setTimeout(function () {
+        handler(payload);
+      }, 0);
+    }
+    return function () {
+      WXE.off(event, handler);
+    };
+  }
+
   // NOTE: DOMContentLoaded / DOMContentBeforeUnLoaded / WindowLoaded /
   // WindowUnLoaded — the four common DOM lifecycle events — are defined in eventbus.js,
   // and are not repeated here.
@@ -66,10 +103,7 @@
      * @param {(feeds: ChannelsFeed[]) => void} handler
      */
     onPCFlowLoaded: function (handler) {
-      WXE.on(WXE.Events.PCFlowLoaded, handler);
-      return function () {
-        WXE.off(WXE.Events.PCFlowLoaded, handler);
-      };
+      return onStickyEvent(WXE.Events.PCFlowLoaded, handler);
     },
     /**
      * 首页推荐 切换到下一个视频
@@ -96,20 +130,14 @@
      * @param {(feed: ChannelsFeed) => void} handler
      */
     onHomeFeedChanged: function (handler) {
-      WXE.on(WXE.Events.HomeFeedChanged, handler);
-      return function () {
-        WXE.off(WXE.Events.HomeFeedChanged, handler);
-      };
+      return onStickyEvent(WXE.Events.HomeFeedChanged, handler);
     },
     /**
      * 获取到推荐列表
      * @param {(feeds: ChannelsFeed[]) => void} handler
      */
     onRecommendFeedsLoaded: function (handler) {
-      WXE.on(WXE.Events.RecommendFeedsLoaded, handler);
-      return function () {
-        WXE.off(WXE.Events.RecommendFeedsLoaded, handler);
-      };
+      return onStickyEvent(WXE.Events.RecommendFeedsLoaded, handler);
     },
     onInteractionedFeedsLoaded: function (handler) {
       WXE.on(WXE.Events.InteractionedFeedsLoaded, handler);
@@ -144,10 +172,7 @@
      * @param {(feed: ChannelsFeed) => void} handler
      */
     onFetchFeedProfile: function (handler) {
-      WXE.on(WXE.Events.FeedProfileLoaded, handler);
-      return function () {
-        WXE.off(WXE.Events.FeedProfileLoaded, handler);
-      };
+      return onStickyEvent(WXE.Events.FeedProfileLoaded, handler);
     },
     /**
      * 获取到视频评论列表
