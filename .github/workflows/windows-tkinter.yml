@@ -29,7 +29,9 @@ jobs:
 
       - name: Test Go launcher integration
         shell: pwsh
-        run: go test ./cmd ./internal/application
+        run: |
+          $env:CGO_ENABLED = "0"
+          go test ./cmd ./internal/application
 
       - name: Build Go core
         shell: pwsh
