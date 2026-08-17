@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import shutil
@@ -57,6 +58,7 @@ class BackendManager:
         self.config = self.workdir / "config.yaml"
         self.log = self.workdir / "core.log"
         self.pid_file = self.workdir / "wx_video_download.pid"
+        self.initialized_file = self.workdir / "gui-initialized.json"
         self._process: subprocess.Popen[bytes] | None = None
         self._log_handle = None
 
@@ -79,13 +81,11 @@ class BackendManager:
         except (OSError, urllib.error.URLError):
             return False
 
-    def start(self) -> None:
+    def start(self, as_admin: bool = False) -> None:
         self.prepare()
         if self.is_ready():
             return
         self._clear_stale_pid_file()
-
-        self._log_handle = self.log.open("ab")
         command = [
             str(self.core),
             "--workdir",
@@ -94,6 +94,18 @@ class BackendManager:
             str(self.config),
             "server",
         ]
+        if as_admin and os.name == "nt":
+            # The Windows certificate store used by the core is machine-wide,
+            # so its first installation needs an explicit UAC elevation.
+            parameters = subprocess.list2cmdline(command[1:])
+            result = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
+                None, "runas", str(self.core), parameters, str(self.workdir), 0,
+            )
+            if result <= 32:
+                raise RuntimeError("管理员授权被取消或无法启动初始化服务。")
+            return
+
+        self._log_handle = self.log.open("ab")
         try:
             self._process = subprocess.Popen(
                 command,
@@ -106,6 +118,41 @@ class BackendManager:
         except Exception:
             self._close_log()
             raise
+
+    def initialization_complete(self) -> bool:
+        return self.initialized_file.is_file()
+
+    def mark_initialized(self) -> None:
+        self.initialized_file.write_text(
+            json.dumps({"version": GUI_VERSION, "initialized_at": int(time.time())}),
+            encoding="utf-8",
+        )
+
+    def set_capture_enabled(self, enabled: bool) -> None:
+        """Update only the proxy settings owned by this GUI in config.yaml."""
+        self.prepare()
+        values = {
+            "enabled": "true" if enabled else "false",
+            "system": "true" if enabled else "false",
+            "skipInstallRootCert": "false" if enabled else "true",
+        }
+        lines = self.config.read_text(encoding="utf-8").splitlines(keepends=True)
+        in_proxy = False
+        seen: set[str] = set()
+        for index, line in enumerate(lines):
+            if line and not line[0].isspace():
+                in_proxy = line.strip() == "proxy:"
+                continue
+            if not in_proxy or ":" not in line:
+                continue
+            key = line.lstrip().split(":", 1)[0].strip()
+            if key in values:
+                indent = line[: len(line) - len(line.lstrip())]
+                lines[index] = f"{indent}{key}: {values[key]}\n"
+                seen.add(key)
+        if seen != set(values):
+            raise RuntimeError("配置文件中缺少代理初始化所需的设置。")
+        self.config.write_text("".join(lines), encoding="utf-8")
 
     def stop(self) -> None:
         if not self.core.is_file():
@@ -282,6 +329,7 @@ class Launcher(tk.Tk):
         self.delete_files = tk.BooleanVar(value=False)
         self._tasks: dict[str, dict] = {}
         self._tasks_loading = False
+        self._initializing = False
         self._closing = False
 
         self.title("视频号下载工具")
@@ -466,9 +514,7 @@ class Launcher(tk.Tk):
 
     def start_backend(self) -> None:
         if self.backend.is_ready(timeout=0.25):
-            self.status.set("运行中")
-            self.download_dir.set(self.backend.download_dir())
-            self.refresh_tasks()
+            self.backend_started()
             return
         self.status.set("正在启动内核……")
         def worker() -> None:
@@ -481,11 +527,74 @@ class Launcher(tk.Tk):
             while not self.backend.is_ready(timeout=0.5) and time.monotonic() < deadline:
                 time.sleep(0.5)
             if self.backend.is_ready(timeout=0.5):
-                self.after(0, lambda: self.status.set("运行中"))
-                self.after(0, lambda: self.download_dir.set(self.backend.download_dir()))
-                self.after(0, self.refresh_tasks)
+                self.after(0, self.backend_started)
             else:
                 self.after(0, lambda: self.status.set("启动超时，请重新打开程序"))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def backend_started(self) -> None:
+        if self._closing:
+            return
+        self.status.set("运行中")
+        self.download_dir.set(self.backend.download_dir())
+        self.refresh_tasks()
+        if not self.backend.initialization_complete():
+            self.after(300, self.offer_first_run_initialization)
+
+    def offer_first_run_initialization(self) -> None:
+        if self._closing or self._initializing or self.backend.initialization_complete():
+            return
+        accepted = messagebox.askyesno(
+            "首次初始化",
+            "为在视频号页面显示下载按钮，程序需要：\n\n"
+            "• 安装本程序生成的本机根证书\n"
+            "• 临时启用 Windows 系统代理（退出时自动恢复）\n\n"
+            "Windows 将显示管理员授权提示。仅在你信任此软件、\n"
+            "并同意上述系统改动时选择“是”。现在初始化吗？",
+        )
+        if not accepted:
+            self.status.set("未初始化：下载按钮尚不可用")
+            return
+        self._initializing = True
+        self.status.set("正在初始化，请在 Windows 授权提示中确认……")
+
+        def worker() -> None:
+            configured = False
+            try:
+                self.backend.stop()
+                self.backend.set_capture_enabled(True)
+                configured = True
+                self.backend.start(as_admin=True)
+                deadline = time.monotonic() + 45
+                while not self.backend.is_ready(timeout=0.5) and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                if not self.backend.is_ready(timeout=0.5):
+                    raise RuntimeError("初始化服务启动超时。")
+                status = api_json("/api/proxy/status")
+                certificate = status.get("certificate") or {}
+                system_proxy = status.get("system_proxy") or {}
+                service = status.get("service") or {}
+                if not certificate.get("installed") or not certificate.get("trusted"):
+                    raise RuntimeError("根证书未安装成功，请确认已允许管理员授权。")
+                if not system_proxy.get("matched") or not service.get("listening"):
+                    raise RuntimeError("系统代理未能启用，请检查 Windows 网络或安全软件设置。")
+            except Exception as exc:
+                if configured:
+                    try:
+                        self.backend.stop()
+                        self.backend.set_capture_enabled(False)
+                    except Exception:
+                        pass
+                message = str(exc)
+                self.after(0, lambda: messagebox.showerror("初始化失败", message))
+                self.after(0, lambda: self.status.set("初始化失败，请重新打开程序后重试"))
+            else:
+                self.backend.mark_initialized()
+                self.after(0, lambda: self.status.set("运行中 · 初始化完成"))
+                self.after(0, self.refresh_tasks)
+            finally:
+                self._initializing = False
+
         threading.Thread(target=worker, daemon=True).start()
 
     def refresh_status(self) -> None:
