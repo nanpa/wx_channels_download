@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import webbrowser
@@ -55,6 +56,7 @@ class BackendManager:
         self.default_config = self.assets / "default-config.yaml"
         self.config = self.workdir / "config.yaml"
         self.log = self.workdir / "core.log"
+        self.pid_file = self.workdir / "wx_video_download.pid"
         self._process: subprocess.Popen[bytes] | None = None
         self._log_handle = None
 
@@ -81,6 +83,7 @@ class BackendManager:
         self.prepare()
         if self.is_ready():
             return
+        self._clear_stale_pid_file()
 
         self._log_handle = self.log.open("ab")
         command = [
@@ -128,26 +131,81 @@ class BackendManager:
                     f"详细错误：{exc}"
                 ) from exc
 
-        command = [
-            str(self.core),
-            "--workdir",
-            str(self.workdir),
-            "--config",
-            str(self.config),
-            "server",
-            "stop",
-        ]
-        subprocess.run(
-            command,
-            cwd=self.workdir,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=12,
-            check=False,
-            creationflags=CREATE_NO_WINDOW,
-        )
+        if self._process is not None and self._process.poll() is None:
+            # This is the exact child launched by this GUI, so it cannot target
+            # an unrelated process whose PID Windows later reused.
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=8)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("内核停止超时，请稍后重试。") from exc
+        else:
+            pid = self._read_pid_file()
+            if pid is not None and self._pid_matches_core(pid):
+                command = [
+                    str(self.core),
+                    "--workdir",
+                    str(self.workdir),
+                    "--config",
+                    str(self.config),
+                    "server",
+                    "stop",
+                ]
+                result = subprocess.run(
+                    command,
+                    cwd=self.workdir,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    timeout=12,
+                    check=False,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                if result.returncode != 0:
+                    detail = result.stdout.decode("utf-8", errors="replace").strip()
+                    raise RuntimeError(f"内核停止失败。{detail}")
+
+        deadline = time.monotonic() + 8
+        while self.is_ready(timeout=0.25) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if self.is_ready(timeout=0.25):
+            raise RuntimeError("内核仍在运行，未清理 PID 文件。")
+        self.pid_file.unlink(missing_ok=True)
+        self._process = None
         self._close_log()
+
+    def _read_pid_file(self) -> int | None:
+        try:
+            return int(self.pid_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+
+    def _pid_matches_core(self, pid: int) -> bool:
+        if pid <= 0 or os.name != "nt":
+            return False
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+            check=False,
+        )
+        return f'"{self.core.name.lower()}"' in result.stdout.lower()
+
+    def _clear_stale_pid_file(self) -> None:
+        pid = self._read_pid_file()
+        if pid is None:
+            return
+        if self._pid_matches_core(pid):
+            raise RuntimeError(
+                f"检测到内核进程仍在运行（PID: {pid}），但管理服务未就绪。"
+                "请先在任务管理器结束 wx_channels_core.exe 后重试。"
+            )
+        self.pid_file.unlink(missing_ok=True)
 
     def _close_log(self) -> None:
         if self._log_handle is not None:
