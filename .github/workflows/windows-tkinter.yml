@@ -1,6 +1,9 @@
 name: Windows Tkinter bundle
 
 on:
+  push:
+    branches:
+      - gui
   workflow_dispatch:
 
 permissions:
