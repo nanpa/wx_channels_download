@@ -1,0 +1,18 @@
+debug:
+  error: false
+  echolog: false
+
+api:
+  protocol: "http"
+  hostname: "127.0.0.1"
+  port: 2022
+
+proxy:
+  enabled: false
+  system: false
+  hostname: "127.0.0.1"
+  port: 2023
+  skipInstallRootCert: true
+
+download:
+  dir: "%UserDownloads%"

@@ -1,0 +1,9 @@
+[project]
+name = "wx-channels-tk-launcher"
+version = "0.1.0"
+description = "Tkinter launcher for the wx_channels_download Go core"
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[tool.uv]
+package = false
