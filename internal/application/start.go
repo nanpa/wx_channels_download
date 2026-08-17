@@ -33,8 +33,32 @@ import (
 	"wx_channel/pkg/system"
 )
 
+// GUIOptions controls how the graphical application is presented.
+type GUIOptions struct {
+	OpenBrowser bool
+}
+
+type startOptions struct {
+	GUI         bool
+	OpenBrowser bool
+}
+
 // Start initializes and runs the local admin, API, and interceptor services.
 func Start(cfg *config.Config) error {
+	return start(cfg, startOptions{})
+}
+
+// StartGUI runs the same services as Start and connects the existing web
+// frontend to a system-tray application. Closing the browser does not stop an
+// active download; users can reopen the page or exit from the tray menu.
+func StartGUI(cfg *config.Config, options GUIOptions) error {
+	return start(cfg, startOptions{
+		GUI:         true,
+		OpenBrowser: options.OpenBrowser,
+	})
+}
+
+func start(cfg *config.Config, options startOptions) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -332,8 +356,32 @@ func Start(cfg *config.Config) error {
 		}
 	}
 
-	fmt.Println("\nPress Ctrl+C to exit...")
-	<-ctx.Done()
+	if options.GUI {
+		page_url := application_page_url(api_cfg.Protocol, api_cfg.Hostname, api_cfg.Port)
+		if options.OpenBrowser {
+			if err := open_external_url(page_url); err != nil {
+				cleanup()
+				return fmt.Errorf("failed to open GUI: %w", err)
+			}
+		}
+		color.Green(fmt.Sprintf("GUI started successfully, address: %v", page_url))
+		if application_tray_supported() {
+			fmt.Println("Use the system tray to reopen the page or exit.")
+		} else {
+			fmt.Println("The system tray is unavailable on this platform; press Ctrl+C to exit.")
+		}
+		run_application_tray(
+			ctx,
+			stop,
+			cfg,
+			page_url,
+			interceptor_srv,
+			proxy_enabled && !interceptor_srv.ProxyTun(),
+		)
+	} else {
+		fmt.Println("\nPress Ctrl+C to exit...")
+		<-ctx.Done()
+	}
 	cleanup()
 	return nil
 }

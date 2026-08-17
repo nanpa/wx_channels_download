@@ -33,7 +33,7 @@ func run_application_tray(
 ) {
 	// velo v1.0.1 currently provides native tray implementations for Windows
 	// and macOS; its Linux implementation is a no-op that cannot be quit.
-	if runtime.GOOS == "linux" {
+	if !application_tray_supported() {
 		<-ctx.Done()
 		return
 	}
@@ -104,6 +104,10 @@ func run_application_tray(
 		tray.Quit()
 	}, nil)
 	stop()
+}
+
+func application_tray_supported() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 }
 
 func refresh_system_proxy_menu(item *tray.MenuItem, interceptor_server *interceptor.InterceptorServer) {

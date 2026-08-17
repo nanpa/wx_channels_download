@@ -188,6 +188,7 @@ export default defineConfig(async () => {
         {
           text: "命令行",
           items: [
+            { text: "GUI 模式", link: "/cli/gui" },
             { text: "代理服务", link: "/cli/proxy" },
             { text: "部署独立服务", link: "/cli/deploy" },
             { text: "删除证书", link: "/cli/uninstall" },
