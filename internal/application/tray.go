@@ -1,3 +1,5 @@
+//go:build with_system_tray
+
 package application
 
 import (
