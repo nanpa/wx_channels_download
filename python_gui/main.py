@@ -158,21 +158,32 @@ class BackendManager:
             "skipInstallRootCert": "false" if enabled else "true",
         }
         lines = self.config.read_text(encoding="utf-8").splitlines(keepends=True)
-        in_proxy = False
-        seen: set[str] = set()
+        proxy_start = -1
+        proxy_end = len(lines)
         for index, line in enumerate(lines):
             if line and not line[0].isspace():
-                in_proxy = line.strip() == "proxy:"
-                continue
-            if not in_proxy or ":" not in line:
+                if line.strip() == "proxy:":
+                    proxy_start = index
+                    continue
+                if proxy_start >= 0:
+                    proxy_end = index
+                    break
+        if proxy_start < 0:
+            raise RuntimeError("配置文件中没有找到 proxy 配置段。")
+
+        seen: set[str] = set()
+        for index in range(proxy_start + 1, proxy_end):
+            line = lines[index]
+            if ":" not in line:
                 continue
             key = line.lstrip().split(":", 1)[0].strip()
             if key in values:
                 indent = line[: len(line) - len(line.lstrip())]
                 lines[index] = f"{indent}{key}: {values[key]}\n"
                 seen.add(key)
-        if seen != set(values):
-            raise RuntimeError("配置文件中缺少代理初始化所需的设置。")
+        missing = [key for key in values if key not in seen]
+        if missing:
+            lines[proxy_end:proxy_end] = [f"  {key}: {values[key]}\n" for key in missing]
         self.config.write_text("".join(lines), encoding="utf-8")
 
     def stop(self) -> None:
