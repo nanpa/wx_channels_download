@@ -22,6 +22,27 @@ HEALTH_URL = f"{API_URL}/api/status"
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
+class SingleInstance:
+    """Prevent two GUI windows from issuing conflicting core lifecycle calls."""
+
+    def __init__(self) -> None:
+        self.handle = None
+        self.already_running = False
+        if os.name != "nt":
+            return
+        self.handle = ctypes.windll.kernel32.CreateMutexW(  # type: ignore[attr-defined]
+            None, False, f"Local\\{APP_NAME}",
+        )
+        if not self.handle:
+            raise RuntimeError("无法创建应用程序实例锁。")
+        self.already_running = ctypes.get_last_error() == 183
+
+    def close(self) -> None:
+        if self.handle and os.name == "nt":
+            ctypes.windll.kernel32.CloseHandle(self.handle)  # type: ignore[attr-defined]
+            self.handle = None
+
+
 def resource_dir() -> Path:
     bundled_dir = getattr(sys, "_MEIPASS", None)
     return Path(bundled_dir) if bundled_dir else Path(__file__).resolve().parent
@@ -567,12 +588,11 @@ class Launcher(tk.Tk):
         self.status.set("运行中")
         self.download_dir.set(self.backend.download_dir())
         self.refresh_tasks()
-        if not self.backend.initialization_complete():
-            self.after(300, self.reconcile_first_run_state)
+        self.after(300, self.reconcile_capture_state)
 
-    def reconcile_first_run_state(self) -> None:
-        """Adopt an existing setup, or recover a proxy stopped by an older GUI."""
-        if self._closing or self._initializing or self.backend.initialization_complete():
+    def reconcile_capture_state(self) -> None:
+        """Keep API and proxy together, including after an interrupted shutdown."""
+        if self._closing or self._initializing:
             return
 
         def worker() -> None:
@@ -592,6 +612,10 @@ class Launcher(tk.Tk):
                 self.backend.mark_initialized()
                 self.after(0, lambda: self.status.set("运行中 · 初始化完成"))
                 return
+            # The marker only means a prior setup succeeded. If the proxy can
+            # no longer be restored, allow the user to explicitly initialize
+            # it again rather than silently leaving a broken half-started core.
+            self.backend.initialized_file.unlink(missing_ok=True)
             self.after(0, self.offer_first_run_initialization)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -689,9 +713,19 @@ class Launcher(tk.Tk):
 
 
 def main() -> int:
-    launcher = Launcher()
-    launcher.mainloop()
-    return 0
+    instance = SingleInstance()
+    if instance.already_running:
+        if os.name == "nt":
+            ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
+                None, "视频号下载工具已经在运行。", "视频号下载工具", 0x40,
+            )
+        return 0
+    try:
+        launcher = Launcher()
+        launcher.mainloop()
+        return 0
+    finally:
+        instance.close()
 
 
 if __name__ == "__main__":
