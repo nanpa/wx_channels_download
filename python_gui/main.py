@@ -567,8 +567,29 @@ class Launcher(tk.Tk):
         self.status.set("运行中")
         self.download_dir.set(self.backend.download_dir())
         self.refresh_tasks()
-        if not self.backend.initialization_complete():
+        if not self.backend.initialization_complete() and self.capture_is_ready():
+            # Existing users may already have a trusted certificate from an
+            # earlier release. Never stop a healthy interceptor merely because
+            # this GUI has not written its own first-run marker yet.
+            self.backend.mark_initialized()
+            self.status.set("运行中 · 初始化完成")
+        elif not self.backend.initialization_complete():
             self.after(300, self.offer_first_run_initialization)
+
+    def capture_is_ready(self) -> bool:
+        try:
+            status = api_json("/api/proxy/status")
+        except Exception:
+            return False
+        certificate = status.get("certificate") or {}
+        system_proxy = status.get("system_proxy") or {}
+        service = status.get("service") or {}
+        return bool(
+            certificate.get("installed")
+            and certificate.get("trusted")
+            and system_proxy.get("matched")
+            and service.get("listening")
+        )
 
     def offer_first_run_initialization(self) -> None:
         if self._closing or self._initializing or self.backend.initialization_complete():
@@ -599,14 +620,8 @@ class Launcher(tk.Tk):
                     time.sleep(0.5)
                 if not self.backend.is_ready(timeout=0.5):
                     raise RuntimeError("初始化服务启动超时。")
-                status = api_json("/api/proxy/status")
-                certificate = status.get("certificate") or {}
-                system_proxy = status.get("system_proxy") or {}
-                service = status.get("service") or {}
-                if not certificate.get("installed") or not certificate.get("trusted"):
-                    raise RuntimeError("根证书未安装成功，请确认已允许管理员授权。")
-                if not system_proxy.get("matched") or not service.get("listening"):
-                    raise RuntimeError("系统代理未能启用，请检查 Windows 网络或安全软件设置。")
+                if not self.capture_is_ready():
+                    raise RuntimeError("证书或系统代理未能启用，请确认已允许管理员授权。")
             except Exception as exc:
                 if configured:
                     try:
