@@ -365,7 +365,7 @@ class Launcher(tk.Tk):
         ttk.Label(toolbar, textvariable=self.task_summary).pack(side="left")
         ttk.Button(toolbar, text="刷新", command=self.refresh_tasks).pack(side="right")
         columns = ("name", "progress", "status", "size", "speed", "folder")
-        self.task_tree = ttk.Treeview(tasks, columns=columns, show="headings", selectmode="browse")
+        self.task_tree = ttk.Treeview(tasks, columns=columns, show="headings", selectmode="extended")
         for column, heading, width in (
             ("name", "名称", 260), ("progress", "进度", 190), ("status", "状态", 80),
             ("size", "大小", 85), ("speed", "速度", 90), ("folder", "保存位置", 220),
@@ -377,6 +377,8 @@ class Launcher(tk.Tk):
         self.task_tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         self.task_tree.bind("<<TreeviewSelect>>", self.on_task_selected)
+        self.task_tree.bind("<ButtonPress-1>", self.begin_drag_select, add="+")
+        self.task_tree.bind("<B1-Motion>", self.update_drag_select, add="+")
 
         detail = ttk.Frame(root)
         detail.pack(fill="x", pady=(9, 0))
@@ -388,7 +390,7 @@ class Launcher(tk.Tk):
         ttk.Button(detail, text="删除选中任务", command=self.delete_selected_task).grid(row=2, column=2, padx=(12, 0))
         ttk.Button(detail, text="关于", command=self.show_about).grid(row=2, column=3, sticky="e")
         detail.columnconfigure(0, weight=1)
-        ttk.Label(root, text="删除记录不会默认删除视频文件；勾选“同时删除本地文件”才会移除已下载文件。", foreground="#9a6700").pack(anchor="w", pady=(9, 0))
+        ttk.Label(root, text="支持 Ctrl/Shift 多选，也可按住鼠标左键在任务行上拖动连续选择。删除记录不会默认删除视频文件。", foreground="#9a6700").pack(anchor="w", pady=(9, 0))
 
     def show_about(self) -> None:
         messagebox.showinfo(
@@ -444,8 +446,7 @@ class Launcher(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def render_tasks(self, task_list: list[dict], total: object) -> None:
-        selected = self.task_tree.selection()
-        selected_id = selected[0] if selected else ""
+        selected_ids = set(self.task_tree.selection())
         self._tasks = {str(task.get("id")): task for task in task_list if task.get("id") is not None}
         for item in self.task_tree.get_children():
             self.task_tree.delete(item)
@@ -460,8 +461,9 @@ class Launcher(tk.Tk):
                 f"{format_bytes(speed)}/s" if speed else "—", folder,
             ))
         self.task_summary.set(f"共 {total} 个任务 · 每 1.5 秒自动刷新")
-        if selected_id in self._tasks:
-            self.task_tree.selection_set(selected_id)
+        retained_ids = selected_ids.intersection(self._tasks)
+        if retained_ids:
+            self.task_tree.selection_set(tuple(retained_ids))
         elif self._tasks:
             self.task_tree.selection_set(next(iter(self._tasks)))
         self.on_task_selected()
@@ -470,12 +472,33 @@ class Launcher(tk.Tk):
         selected = self.task_tree.selection()
         return self._tasks.get(selected[0]) if selected else None
 
+    def selected_tasks(self) -> list[dict]:
+        return [self._tasks[task_id] for task_id in self.task_tree.selection() if task_id in self._tasks]
+
+    def begin_drag_select(self, event) -> None:
+        self._drag_anchor = self.task_tree.identify_row(event.y) or None
+
+    def update_drag_select(self, event) -> None:
+        if not self._drag_anchor:
+            return
+        target = self.task_tree.identify_row(event.y)
+        children = self.task_tree.get_children()
+        if not target or self._drag_anchor not in children or target not in children:
+            return
+        start, end = sorted((children.index(self._drag_anchor), children.index(target)))
+        self.task_tree.selection_set(children[start : end + 1])
+
     def on_task_selected(self, _event=None) -> None:
-        task = self.selected_task()
-        if not task:
+        tasks = self.selected_tasks()
+        if not tasks:
             self.selected_task_text.set("暂无下载任务")
             self.task_progress["value"] = 0
             return
+        if len(tasks) > 1:
+            self.selected_task_text.set(f"已选择 {len(tasks)} 个下载任务")
+            self.task_progress["value"] = 0
+            return
+        task = tasks[0]
         progress = min(100, max(0, float(task.get("progress") or 0)))
         error = str(task.get("error") or "")
         text = f"{task.get('name') or '未命名任务'} · {STATUS_TEXT.get(task.get('status'), '未知')} · {progress:.1f}%"
@@ -483,10 +506,11 @@ class Launcher(tk.Tk):
         self.task_progress["value"] = progress
 
     def open_selected_folder(self) -> None:
-        task = self.selected_task()
-        if not task:
+        tasks = self.selected_tasks()
+        if not tasks:
             messagebox.showwarning("未选择任务", "请先在下载列表中选择一个任务。")
             return
+        task = tasks[0]
         files = task.get("files") or []
         directory = next((item.get("download_dir") for item in files if item.get("download_dir")), self.download_dir.get())
         if not directory:
@@ -495,17 +519,22 @@ class Launcher(tk.Tk):
         path = Path(str(directory)); path.mkdir(parents=True, exist_ok=True); open_path(path)
 
     def delete_selected_task(self) -> None:
-        task = self.selected_task()
-        if not task:
+        tasks = self.selected_tasks()
+        if not tasks:
             messagebox.showwarning("未选择任务", "请先在下载列表中选择一个任务。")
             return
         delete_files = self.delete_files.get()
         suffix = "并删除本地文件" if delete_files else "，保留本地文件"
-        if not messagebox.askyesno("确认删除", f"确定删除“{task.get('name') or task.get('id')}”{suffix}吗？"):
+        count = len(tasks)
+        subject = f"选中的 {count} 个下载任务" if count > 1 else f"“{tasks[0].get('name') or tasks[0].get('id')}”"
+        if not messagebox.askyesno("确认删除", f"确定删除{subject}{suffix}吗？"):
             return
         def worker() -> None:
             try:
-                api_json("/api/v1/download_task/delete", "POST", {"task_ids": [int(task["id"])], "delete_files": delete_files})
+                api_json("/api/v1/download_task/delete", "POST", {
+                    "task_ids": [int(task["id"]) for task in tasks],
+                    "delete_files": delete_files,
+                })
             except Exception as exc:
                 self.after(0, lambda: messagebox.showerror("删除失败", str(exc)))
             else:
