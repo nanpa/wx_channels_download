@@ -567,14 +567,34 @@ class Launcher(tk.Tk):
         self.status.set("运行中")
         self.download_dir.set(self.backend.download_dir())
         self.refresh_tasks()
-        if not self.backend.initialization_complete() and self.capture_is_ready():
-            # Existing users may already have a trusted certificate from an
-            # earlier release. Never stop a healthy interceptor merely because
-            # this GUI has not written its own first-run marker yet.
-            self.backend.mark_initialized()
-            self.status.set("运行中 · 初始化完成")
-        elif not self.backend.initialization_complete():
-            self.after(300, self.offer_first_run_initialization)
+        if not self.backend.initialization_complete():
+            self.after(300, self.reconcile_first_run_state)
+
+    def reconcile_first_run_state(self) -> None:
+        """Adopt an existing setup, or recover a proxy stopped by an older GUI."""
+        if self._closing or self._initializing or self.backend.initialization_complete():
+            return
+
+        def worker() -> None:
+            ready = self.capture_is_ready()
+            if not ready:
+                try:
+                    # A previous GUI may have stopped only the interceptor
+                    # while leaving the API process on port 2022 alive.
+                    api_json("/api/service/start", "POST", {"name": "proxy"})
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline and not ready:
+                        time.sleep(0.5)
+                        ready = self.capture_is_ready()
+                except Exception:
+                    ready = False
+            if ready:
+                self.backend.mark_initialized()
+                self.after(0, lambda: self.status.set("运行中 · 初始化完成"))
+                return
+            self.after(0, self.offer_first_run_initialization)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def capture_is_ready(self) -> bool:
         try:
