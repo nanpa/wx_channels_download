@@ -11,10 +11,10 @@ import (
 )
 
 func fetchCertificates() ([]Certificate, error) {
-	// Avoid `+` property concatenation here. Some Windows PowerShell hosts
-	// parse that expression incorrectly when launched from an elevated GUI
-	// process. The format operator is compatible with Windows PowerShell 2.0.
-	cmd := "Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { \"{0}###{1}\" -f $_.Thumbprint, $_.Subject }"
+	// Do not use the Cert: PowerShell drive: minimal/elevated PowerShell hosts
+	// can start without that provider. X509Store accesses the Windows store
+	// directly and is available in Windows PowerShell 2.0 and later.
+	cmd := "$store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root','LocalMachine'); $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly); try { $store.Certificates | ForEach-Object { \"{0}###{1}\" -f $_.Thumbprint, $_.Subject } } finally { $store.Close() }"
 	ps := exec.Command("powershell.exe", "-NoProfile", "-Command", cmd)
 	output, err2 := ps.CombinedOutput()
 	if err2 != nil {
