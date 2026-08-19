@@ -690,17 +690,12 @@ class Launcher(tk.Tk):
 
         def worker() -> None:
             try:
-                # Let the Go core perform its own tested Windows elevation and
-                # restart hand-off. Stopping it from the GUI first can leave an
-                # API-only process running when UAC is declined or delayed.
-                api_json("/api/proxy/config", "POST", {
-                    "values": {
-                        "proxy.enabled": True,
-                        "proxy.system": True,
-                        "proxy.skipInstallRootCert": False,
-                    },
-                    "restart": True,
-                })
+                # Start the elevated core only after the normal core has
+                # released port 2022.  The core's in-process elevation path
+                # can otherwise race its original API process on Windows.
+                self.backend.stop()
+                self.backend.set_capture_enabled(True)
+                self.backend.start(as_admin=True)
                 deadline = time.monotonic() + 60
                 while not self.backend.is_ready(timeout=0.5) and time.monotonic() < deadline:
                     time.sleep(0.5)
