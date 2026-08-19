@@ -113,6 +113,10 @@ class BackendManager:
             self.config.write_text("".join(cleaned), encoding="utf-8")
 
     def is_ready(self, timeout: float = 0.7) -> bool:
+        # `/api/status` may take about 0.5 s while the core reads proxy state
+        # on Windows.  A shorter client timeout makes a healthy core look
+        # permanently offline, preventing the first-run flow from beginning.
+        timeout = max(timeout, 2.0)
         try:
             with urllib.request.urlopen(HEALTH_URL, timeout=timeout) as response:
                 return response.status == 200
