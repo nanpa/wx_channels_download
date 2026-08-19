@@ -11,12 +11,14 @@ import (
 )
 
 func fetchCertificates() ([]Certificate, error) {
-	// PowerShell 2.0 compatible command
-	cmd := "Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { $_.Thumbprint + \"###\" + $_.Subject }"
+	// Avoid `+` property concatenation here. Some Windows PowerShell hosts
+	// parse that expression incorrectly when launched from an elevated GUI
+	// process. The format operator is compatible with Windows PowerShell 2.0.
+	cmd := "Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { \"{0}###{1}\" -f $_.Thumbprint, $_.Subject }"
 	ps := exec.Command("powershell.exe", "-NoProfile", "-Command", cmd)
 	output, err2 := ps.CombinedOutput()
 	if err2 != nil {
-		return nil, fmt.Errorf("获取证书时发生错误，%v\n", err2.Error())
+		return nil, fmt.Errorf("获取证书时发生错误，%v\n%s", err2, strings.TrimSpace(string(output)))
 	}
 
 	var certificates []Certificate
