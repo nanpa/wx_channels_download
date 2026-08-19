@@ -94,6 +94,23 @@ class BackendManager:
             if not self.default_config.is_file():
                 raise FileNotFoundError(f"缺少默认配置：{self.default_config}")
             shutil.copy2(self.default_config, self.config)
+        self._repair_legacy_config()
+
+    def _repair_legacy_config(self) -> None:
+        """Remove an invalid key written by early GUI builds.
+
+        The Go configuration writer canonicalizes Viper keys to lower case.
+        Older GUI releases added a second, camel-case ``skipInstallRootCert``
+        key outside the expected schema.  Some Go/YAML versions reject that
+        legacy file entirely, preventing even the API from starting.
+        """
+        try:
+            lines = self.config.read_text(encoding="utf-8").splitlines(keepends=True)
+        except OSError:
+            return
+        cleaned = [line for line in lines if line.lstrip().split(":", 1)[0].strip() != "skipInstallRootCert"]
+        if len(cleaned) != len(lines):
+            self.config.write_text("".join(cleaned), encoding="utf-8")
 
     def is_ready(self, timeout: float = 0.7) -> bool:
         try:
@@ -174,13 +191,17 @@ class BackendManager:
         seen: set[str] = set()
         for index in range(proxy_start + 1, proxy_end):
             line = lines[index]
-            if ":" not in line:
+            # Only edit direct children of proxy.  Earlier code also changed
+            # proxy.tcprelay.enabled because it matched this key by name.
+            if not line.startswith("  ") or line.startswith("    ") or ":" not in line:
                 continue
             key = line.lstrip().split(":", 1)[0].strip()
-            if key in values:
+            canonical_key = key.lower()
+            target_key = next((name for name in values if name.lower() == canonical_key), None)
+            if target_key:
                 indent = line[: len(line) - len(line.lstrip())]
-                lines[index] = f"{indent}{key}: {values[key]}\n"
-                seen.add(key)
+                lines[index] = f"{indent}{key}: {values[target_key]}\n"
+                seen.add(target_key)
         missing = [key for key in values if key not in seen]
         if missing:
             lines[proxy_end:proxy_end] = [f"  {key}: {values[key]}\n" for key in missing]
