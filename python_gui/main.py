@@ -390,8 +390,8 @@ class Launcher(tk.Tk):
         self._closing = False
 
         self.title("视频号下载工具")
-        self.geometry("1000x630")
-        self.minsize(820, 520)
+        self.geometry("1000x720")
+        self.minsize(860, 600)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build_ui()
         self.after(250, self.start_backend)
@@ -408,7 +408,7 @@ class Launcher(tk.Tk):
         status_frame.pack(fill="x")
         ttk.Label(status_frame, textvariable=self.status, font=("Microsoft YaHei UI", 12)).pack(anchor="w")
 
-        folder = ttk.LabelFrame(root, text="默认下载文件夹（仅影响之后新建的任务）", padding=8)
+        folder = ttk.LabelFrame(root, text="文件存放位置", padding=8)
         folder.pack(fill="x", pady=(12, 10))
         ttk.Entry(folder, textvariable=self.download_dir, state="readonly").grid(row=0, column=0, sticky="ew")
         ttk.Button(folder, text="选择文件夹…", command=self.choose_download_dir).grid(row=0, column=1, padx=(8, 0))
@@ -447,7 +447,6 @@ class Launcher(tk.Tk):
         ttk.Button(detail, text="删除选中任务", command=self.delete_selected_task).grid(row=2, column=2, padx=(12, 0))
         ttk.Button(detail, text="关于", command=self.show_about).grid(row=2, column=3, sticky="e")
         detail.columnconfigure(0, weight=1)
-        ttk.Label(root, text="支持 Ctrl/Shift 多选，也可按住鼠标左键在任务行上拖动连续选择。删除记录不会默认删除视频文件。", foreground="#9a6700").pack(anchor="w", pady=(9, 0))
 
     def show_about(self) -> None:
         messagebox.showinfo(
@@ -630,6 +629,7 @@ class Launcher(tk.Tk):
         """Keep API and proxy together, including after an interrupted shutdown."""
         if self._closing or self._initializing:
             return
+        was_initialized = self.backend.initialization_complete()
 
         def worker() -> None:
             ready = self.capture_is_ready()
@@ -645,8 +645,9 @@ class Launcher(tk.Tk):
                 except Exception:
                     ready = False
             if ready:
-                self.backend.mark_initialized()
-                self.after(0, lambda: self.status.set("运行中 · 初始化完成"))
+                if not was_initialized:
+                    self.backend.mark_initialized()
+                    self.after(0, lambda: self.status.set("运行中 · 初始化完成"))
                 return
             # The marker only means a prior setup succeeded. If the proxy can
             # no longer be restored, allow the user to explicitly initialize
