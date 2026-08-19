@@ -664,26 +664,26 @@ class Launcher(tk.Tk):
         self.status.set("正在初始化，请在 Windows 授权提示中确认……")
 
         def worker() -> None:
-            configured = False
             try:
-                self.backend.stop()
-                self.backend.set_capture_enabled(True)
-                configured = True
-                self.backend.start(as_admin=True)
-                deadline = time.monotonic() + 45
+                # Let the Go core perform its own tested Windows elevation and
+                # restart hand-off. Stopping it from the GUI first can leave an
+                # API-only process running when UAC is declined or delayed.
+                api_json("/api/proxy/config", "POST", {
+                    "values": {
+                        "proxy.enabled": True,
+                        "proxy.system": True,
+                        "proxy.skipInstallRootCert": False,
+                    },
+                    "restart": True,
+                })
+                deadline = time.monotonic() + 60
                 while not self.backend.is_ready(timeout=0.5) and time.monotonic() < deadline:
                     time.sleep(0.5)
                 if not self.backend.is_ready(timeout=0.5):
-                    raise RuntimeError("初始化服务启动超时。")
+                    raise RuntimeError("初始化未完成：请确认 Windows 管理员授权已允许。")
                 if not self.capture_is_ready():
                     raise RuntimeError("证书或系统代理未能启用，请确认已允许管理员授权。")
             except Exception as exc:
-                if configured:
-                    try:
-                        self.backend.stop()
-                        self.backend.set_capture_enabled(False)
-                    except Exception:
-                        pass
                 message = str(exc)
                 self.after(0, lambda: messagebox.showerror("初始化失败", message))
                 self.after(0, lambda: self.status.set("初始化失败，请重新打开程序后重试"))
