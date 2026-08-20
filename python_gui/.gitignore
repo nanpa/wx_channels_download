@@ -6,3 +6,4 @@ core/*.exe
 !core/.gitkeep
 __pycache__/
 *.pyc
+gui_build_version.py

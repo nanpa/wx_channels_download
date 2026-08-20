@@ -16,7 +16,12 @@ from tkinter import filedialog, messagebox, ttk
 
 
 APP_NAME = "WxChannelsDownload"
-GUI_VERSION = "0.92"
+try:
+    # GitHub Actions creates this module immediately before packaging, so every
+    # distributed build carries its own visible version number.
+    from gui_build_version import GUI_VERSION
+except ImportError:
+    GUI_VERSION = "0.93-dev"
 API_URL = "http://127.0.0.1:2022"
 HEALTH_URL = f"{API_URL}/api/status"
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0

@@ -61,15 +61,17 @@ jobs:
       - name: Build Tkinter launcher
         shell: pwsh
         working-directory: python_gui
+        env:
+          WX_CHANNELS_GUI_VERSION: 0.93.${{ github.run_number }}
         run: .\build.ps1
 
       - name: Create distribution archive
         shell: pwsh
-        run: Compress-Archive -Path .\python_gui\dist\WxChannelsDownload\* -DestinationPath .\WxChannelsDownload-windows-x86_64.zip
+        run: Compress-Archive -Path .\python_gui\dist\WxChannelsDownload\* -DestinationPath .\WxChannelsDownload-windows-x86_64-v0.93.${{ github.run_number }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WxChannelsDownload-windows-x86_64
-          path: WxChannelsDownload-windows-x86_64.zip
+          name: WxChannelsDownload-windows-x86_64-v0.93.${{ github.run_number }}
+          path: WxChannelsDownload-windows-x86_64-v0.93.${{ github.run_number }}.zip
           if-no-files-found: error
