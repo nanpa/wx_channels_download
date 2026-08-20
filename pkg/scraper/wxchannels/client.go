@@ -42,6 +42,7 @@ type FetchParams struct {
 type ClientOptions struct {
 	RefreshInterval int
 	CookieReader    *cookies.Reader
+	SphCookie       string
 }
 
 type Client struct {
@@ -53,6 +54,7 @@ type Client struct {
 	req_seq          uint64
 	refresh_interval int
 	cookie_reader    *cookies.Reader
+	sph_cookie       string
 	OnConnected      func(client *WebsocketClient)
 	OnDisconnected   func(client *WebsocketClient)
 	OnMessage        func(client *WebsocketClient, message []byte)
@@ -66,6 +68,7 @@ func NewClient(options ClientOptions) *Client {
 		req_seq:          uint64(time.Now().UnixNano()),
 		refresh_interval: options.RefreshInterval,
 		cookie_reader:    options.CookieReader,
+		sph_cookie:       strings.TrimSpace(options.SphCookie),
 	}
 }
 
@@ -89,18 +92,35 @@ func is_channels_feed_url(raw_url string) bool {
 func (c *Client) fetch_profile_with_share_url(raw_url string) (any, error) {
 	cookie, err := c.resolve_sph_cookie()
 	if err != nil {
-		return nil, err
+		resp, fetch_err := c.FetchChannelsFeedProfile("", "", raw_url, "")
+		if fetch_err != nil {
+			return nil, fetch_err
+		}
+		if resp.ErrCode != 0 {
+			return nil, fmt.Errorf("fetch channels shared feed profile: %s", resp.ErrMsg)
+		}
+		return &resp.Data.Object, nil
 	}
 	return FetchVideoProfileWithShareUrl(raw_url, cookie)
 }
 
 func (c *Client) resolve_sph_cookie() (string, error) {
+	fallback_cookie := strings.TrimSpace(c.sph_cookie)
 	if c.cookie_reader == nil {
+		if fallback_cookie != "" {
+			return fallback_cookie, nil
+		}
 		return "", errors.New("persistent cookie reader is unavailable")
 	}
 	cookie, err := c.cookie_reader.HeaderForDomain(yuanbao_cookie_domain)
+	if err == nil && strings.TrimSpace(cookie) != "" {
+		return strings.TrimSpace(cookie), nil
+	}
 	if err == nil {
-		return cookie, nil
+		err = cookies.ErrCookieNotFound
+	}
+	if fallback_cookie != "" {
+		return fallback_cookie, nil
 	}
 	if errors.Is(err, cookies.ErrCookieNotFound) {
 		return "", errors.New("no yuanbao.tencent.com cookie was found")
@@ -108,8 +128,8 @@ func (c *Client) resolve_sph_cookie() (string, error) {
 	return "", fmt.Errorf("read yuanbao.tencent.com cookie: %w", err)
 }
 
-// CheckSphCookie verifies that a persistent yuanbao.tencent.com cookie is
-// available for SPH share-link parsing.
+// CheckSphCookie verifies that a yuanbao.tencent.com cookie is available from
+// persistent storage or the configured fallback for SPH share-link parsing.
 func (c *Client) CheckSphCookie() error {
 	_, err := c.resolve_sph_cookie()
 	return err

@@ -500,6 +500,8 @@ function number_or_fallback(value, fallback) {
 
 function DownloaderPanelViewModel(props = {}) {
   const WEBSOCKET_RETRY_INTERVAL = 5000;
+  const WEBSOCKET_PROBE_INTERVAL = 10000;
+  const WEBSOCKET_PROBE_TIMEOUT = 5000;
   const ITEM_HEIGHT = Number(props.itemHeight) || 82;
   const ITEM_TITLE_LINE_HEIGHT = 20;
   const ITEM_STATUS_LINE_HEIGHT = 18;
@@ -728,6 +730,9 @@ function DownloaderPanelViewModel(props = {}) {
   let websocket_connect_promise_ = null;
   let websocket_reconnect_promise_ = null;
   let websocket_retry_timer_ = null;
+  let websocket_connection_attempt_ = 0;
+  let websocket_probe_timer_ = null;
+  let websocket_probe_controller_ = null;
 
   function cancel_websocket_retry() {
     if (websocket_retry_timer_ === null) {
@@ -754,6 +759,91 @@ function DownloaderPanelViewModel(props = {}) {
         },
       );
     }, WEBSOCKET_RETRY_INTERVAL);
+  }
+
+  function cancel_websocket_probe() {
+    if (websocket_probe_timer_ !== null) {
+      clearTimeout(websocket_probe_timer_);
+      websocket_probe_timer_ = null;
+    }
+    if (websocket_probe_controller_ !== null) {
+      websocket_probe_controller_.abort();
+      websocket_probe_controller_ = null;
+    }
+  }
+
+  function download_service_probe_url() {
+    const url = new URL("/api/status", APIOrigin);
+    url.searchParams.set("download_service_probe", String(Date.now()));
+    return url.href;
+  }
+
+  async function probe_download_service(signal) {
+    try {
+      const response = await fetch(download_service_probe_url(), {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        signal,
+      });
+      if (!response.ok) {
+        return {
+          available: false,
+          error: new Error(
+            `download service probe failed with HTTP ${response.status}`,
+          ),
+          status: response.status,
+        };
+      }
+      const payload = await response.json();
+      if (!payload || Number(payload.code) !== 0 || !payload.data) {
+        return {
+          available: false,
+          error: new Error("download service probe returned invalid data"),
+          status: response.status,
+        };
+      }
+      return { available: true, status: response.status };
+    } catch (error) {
+      return {
+        available: false,
+        error:
+          error instanceof Error
+            ? error
+            : new Error("download service probe failed"),
+        status: 0,
+      };
+    }
+  }
+
+  function schedule_websocket_probe(ws, on_result, delay) {
+    cancel_websocket_probe();
+    if (websocket_ !== ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    websocket_probe_timer_ = setTimeout(async () => {
+      websocket_probe_timer_ = null;
+      if (websocket_ !== ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const controller = new AbortController();
+      websocket_probe_controller_ = controller;
+      const timeout_timer = setTimeout(
+        () => controller.abort(),
+        WEBSOCKET_PROBE_TIMEOUT,
+      );
+      const result = await probe_download_service(controller.signal);
+      clearTimeout(timeout_timer);
+      if (websocket_probe_controller_ !== controller) {
+        return;
+      }
+      websocket_probe_controller_ = null;
+      if (websocket_ !== ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      on_result(result);
+    }, Math.max(0, Number(delay) || 0));
   }
 
   function set_websocket_connected(connected) {
@@ -2504,12 +2594,43 @@ function DownloaderPanelViewModel(props = {}) {
         websocket_ &&
         websocket_.readyState === WebSocket.OPEN
       ) {
+        WXU.log
+          .Debug()
+          .Str("file", "frontend/inject/download/model.js")
+          .Int("connection_attempt", websocket_connection_attempt_)
+          .Int("ready_state", websocket_.readyState)
+          .Msg("reuse open download websocket connection");
         return Promise.resolve(true);
       }
       if (websocket_connect_promise_) {
+        WXU.log
+          .Debug()
+          .Str("file", "frontend/inject/download/model.js")
+          .Int("connection_attempt", websocket_connection_attempt_)
+          .Int("ready_state", websocket_ ? websocket_.readyState : 3)
+          .Msg("reuse pending download websocket connection attempt");
         return websocket_connect_promise_;
       }
+
+      const connection_attempt = ++websocket_connection_attempt_;
+      const connection_started_at = Date.now();
+      const websocket_url = String(DownloaderWSURL || "");
+      const add_connection_log_context = (builder) =>
+        builder
+          .Str("file", "frontend/inject/download/model.js")
+          .Str("websocket_url", websocket_url)
+          .Str("api_origin", String(APIOrigin || ""))
+          .Bool("websocket_available", typeof WebSocket === "function")
+          .Bool(
+            "remote_server_enabled",
+            is_download_runtime_flag_enabled(RemoteServerEnabled),
+          )
+          .Bool("in_docker", is_download_runtime_flag_enabled(InDocker));
+
       websocket_connecting_.as(true);
+      add_connection_log_context(WXU.log.Info()).Msg(
+        "start download websocket connection",
+      );
       const connection_promise = new Promise((resolve, reject) => {
         let ws;
         try {
@@ -2518,61 +2639,195 @@ function DownloaderPanelViewModel(props = {}) {
           websocket_connecting_.as(false);
           set_websocket_connected(false);
           schedule_websocket_retry();
+          add_connection_log_context(WXU.log.Error(error))
+            .Int("elapsed_ms", Date.now() - connection_started_at)
+            .Bool("retry_scheduled", websocket_retry_timer_ !== null)
+            .Int("retry_interval_ms", WEBSOCKET_RETRY_INTERVAL)
+            .Msg("construct download websocket failed");
+          WXU.log.flushNow();
           reject(error);
           return;
         }
         websocket_ = ws;
         let opened = false;
-        ws.onopen = () => {
-          if (websocket_ !== ws) {
-            ws.close();
-            return;
-          }
-          opened = true;
-          websocket_connecting_.as(false);
-          set_websocket_connected(true);
-          resolve(true);
-        };
-        ws.onclose = () => {
+        let confirmed = false;
+        const handle_probe_result = (probe_result) => {
           if (websocket_ !== ws) {
             return;
           }
+          if (probe_result && probe_result.available) {
+            websocket_connecting_.as(false);
+            set_websocket_connected(true);
+            if (!confirmed) {
+              confirmed = true;
+              add_connection_log_context(WXU.log.Info())
+                .Int("ready_state", ws.readyState)
+                .Int("elapsed_ms", Date.now() - connection_started_at)
+                .Msg("download websocket connection confirmed");
+              resolve(true);
+            }
+            schedule_websocket_probe(
+              ws,
+              handle_probe_result,
+              WEBSOCKET_PROBE_INTERVAL,
+            );
+            return;
+          }
+          const probe_error =
+            probe_result && probe_result.error instanceof Error
+              ? probe_result.error
+              : new Error("download service is unavailable");
           websocket_ = null;
+          cancel_websocket_probe();
           websocket_connecting_.as(false);
           set_websocket_connected(false);
           schedule_websocket_retry();
-          if (opened) {
+          add_connection_log_context(WXU.log.Error(probe_error))
+            .Int("ready_state", ws.readyState)
+            .Int("elapsed_ms", Date.now() - connection_started_at)
+            .Int("probe_status", Number(probe_result && probe_result.status))
+            .Int("probe_timeout_ms", WEBSOCKET_PROBE_TIMEOUT)
+            .Bool("retry_scheduled", websocket_retry_timer_ !== null)
+            .Msg("download service probe failed");
+          WXU.log.flushNow();
+          if (!confirmed) {
+            reject(probe_error);
+          }
+          try {
+            ws.close(4000, "download service probe failed");
+          } catch (error) {
+            add_connection_log_context(WXU.log.Error(error))
+              .Int("ready_state", ws.readyState)
+              .Msg("close unavailable download websocket failed");
+            WXU.log.flushNow();
+          }
+        };
+        ws.onopen = () => {
+          if (websocket_ !== ws) {
+            add_connection_log_context(WXU.log.Warn())
+              .Int("ready_state", ws.readyState)
+              .Int("elapsed_ms", Date.now() - connection_started_at)
+              .Msg("ignore stale download websocket open event");
+            try {
+              ws.close();
+            } catch (error) {
+              add_connection_log_context(WXU.log.Error(error))
+                .Int("ready_state", ws.readyState)
+                .Msg("close stale download websocket failed");
+            }
+            return;
+          }
+          opened = true;
+          schedule_websocket_probe(ws, handle_probe_result, 0);
+          add_connection_log_context(WXU.log.Info())
+            .Int("ready_state", ws.readyState)
+            .Int("elapsed_ms", Date.now() - connection_started_at)
+            .Str("protocol", ws.protocol || "")
+            .Str("extensions", ws.extensions || "")
+            .Msg("download websocket connection opened");
+        };
+        ws.onclose = (event) => {
+          const is_current_connection = websocket_ === ws;
+          const close_error = new Error(
+            `download websocket connection closed: code=${event.code}, reason=${event.reason || "empty"}, was_clean=${event.wasClean}`,
+          );
+          const close_log = add_connection_log_context(
+            opened ? WXU.log.Warn() : WXU.log.Error(close_error),
+          )
+            .Bool("opened", opened)
+            .Bool("is_current_connection", is_current_connection)
+            .Int("ready_state", ws.readyState)
+            .Int("elapsed_ms", Date.now() - connection_started_at)
+            .Int("close_code", event.code)
+            .Str("close_reason", event.reason || "")
+            .Bool("was_clean", event.wasClean);
+          if (websocket_ !== ws) {
+            close_log.Msg("stale download websocket connection closed");
+            if (!opened) {
+              WXU.log.flushNow();
+            }
+            return;
+          }
+          websocket_ = null;
+          cancel_websocket_probe();
+          websocket_connecting_.as(false);
+          set_websocket_connected(false);
+          schedule_websocket_retry();
+          close_log
+            .Bool("retry_scheduled", websocket_retry_timer_ !== null)
+            .Int("retry_interval_ms", WEBSOCKET_RETRY_INTERVAL)
+            .Msg("download websocket connection closed");
+          if (confirmed) {
             WXU.error({
               msg: `download websocket connection closed.`,
-              source: "model.js:2033",
+              source: "frontend/inject/download/model.js:connect",
             });
             WXU.log.flushNow();
             return;
           }
-          reject(new Error("download websocket connection closed"));
+          WXU.log.flushNow();
+          reject(close_error);
         };
-        ws.onerror = (e) => {
+        ws.onerror = (event) => {
           if (websocket_ !== ws) {
+            add_connection_log_context(WXU.log.Debug())
+              .Bool("opened", opened)
+              .Int("ready_state", ws.readyState)
+              .Int("elapsed_ms", Date.now() - connection_started_at)
+              .Str("event_type", event && event.type ? event.type : "error")
+              .Msg("ignore stale download websocket error event");
             return;
           }
+          cancel_websocket_probe();
           websocket_connecting_.as(false);
           set_websocket_connected(false);
           schedule_websocket_retry();
-          if (!opened) {
+          const event_error =
+            event instanceof Error
+              ? event
+              : event && event.error instanceof Error
+                ? event.error
+                : new Error(
+                    (event && event.message) ||
+                      "download websocket connection failed",
+                  );
+          add_connection_log_context(WXU.log.Error(event_error))
+            .Bool("opened", opened)
+            .Int("ready_state", ws.readyState)
+            .Int("elapsed_ms", Date.now() - connection_started_at)
+            .Str("event_type", event && event.type ? event.type : "error")
+            .Bool("is_trusted", !!(event && event.isTrusted))
+            .Bool("retry_scheduled", websocket_retry_timer_ !== null)
+            .Int("retry_interval_ms", WEBSOCKET_RETRY_INTERVAL)
+            .Msg("download websocket connection error");
+          WXU.log.flushNow();
+          if (!confirmed) {
             websocket_ = null;
-            reject(
-              e instanceof Error
-                ? e
-                : new Error("download websocket connection failed"),
-            );
+            reject(event_error);
             try {
               ws.close();
-            } catch (error) {}
+            } catch (error) {
+              add_connection_log_context(WXU.log.Error(error))
+                .Int("ready_state", ws.readyState)
+                .Msg("close failed download websocket failed");
+              WXU.log.flushNow();
+            }
           }
         };
         ws.onmessage = (ev) => {
           const [err, msg] = WXU.parseJSON(ev.data);
           if (err) {
+            add_connection_log_context(WXU.log.Error(err))
+              .Int("ready_state", ws.readyState)
+              .Int(
+                "message_size",
+                typeof ev.data === "string" ? ev.data.length : 0,
+              )
+              .Str(
+                "message_data_type",
+                ev.data === null ? "null" : typeof ev.data,
+              )
+              .Msg("parse download websocket message failed");
             return;
           }
           if (msg.type === "task_stats") {
@@ -3058,8 +3313,8 @@ function DownloaderPanelViewModel(props = {}) {
     createBrowseHistories(feeds, opt) {
       WXU.log
         .Info()
-        .Str("file", "download/model.js")
-        .Msg("createBrowseHistories");
+        .Str("file", "/download/model.js")
+        .Msg("create browse history");
       var body = {
         objects: feeds.map((feed) => {
           return {
@@ -3312,6 +3567,7 @@ function DownloaderPanelViewModel(props = {}) {
     },
     clean() {
       cancel_websocket_retry();
+      cancel_websocket_probe();
       resetVirtualTasks();
       status_counts_.as(empty_download_status_counts());
     },

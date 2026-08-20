@@ -2096,7 +2096,7 @@ function DownloadTaskCard(props) {
                         "border-radius": "4px",
                       },
                     },
-                    ["直播"],
+                    ["流媒体"],
                   );
                 },
               }),
@@ -2271,7 +2271,7 @@ function DownloadTaskCard(props) {
                       ok() {
                         return [
                           Timeless.Icon({
-                            name: "file-symlink",
+                            name: "external-link",
                             size: 20,
                           }),
                         ];

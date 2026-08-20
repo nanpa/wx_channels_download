@@ -29,7 +29,7 @@ function normalize_content_account(raw) {
 }
 
 function normalize_content_detail(raw) {
-	const source = raw && typeof raw === "object" ? raw : {};
+  const source = raw && typeof raw === "object" ? raw : {};
   const accounts_source = Array.isArray(source.accounts)
     ? source.accounts
     : Array.isArray(source.Accounts)
@@ -108,10 +108,17 @@ function normalize_content_detail(raw) {
     detail: first_non_empty(source.detail, source.Detail) || null,
     accounts: accounts_source.map(normalize_content_account).filter(Boolean),
     download_tasks: tasks,
-    resources,
+    resources: resources.map((resource) => ({
+      ...resource,
+      download_task_in_progress: resource_download_task_in_progress(
+        resource,
+        tasks,
+      ),
+    })),
     relations: {
       ...relations_source,
       list: relations,
+      has_content: relations.length > 0,
       total: number_or_default(
         first_non_empty(relations_source.total, relations_source.Total),
         relations.length,
@@ -126,6 +133,13 @@ function detail_id_from_location() {
   } catch {
     return "";
   }
+}
+
+function prop_value(value) {
+  if (value && typeof value === "object" && "value" in value) {
+    return value.value;
+  }
+  return value;
 }
 
 function content_source_url(content) {
@@ -149,6 +163,58 @@ function resource_file_url(resource) {
     ),
   ).trim();
   return local_path ? `/api/file?path=${encodeURIComponent(local_path)}` : "";
+}
+
+function object_value(source, ...keys) {
+  if (!source || typeof source !== "object") return undefined;
+  for (const key of keys) {
+    if (source[key] !== undefined && source[key] !== null) {
+      return source[key];
+    }
+  }
+  return undefined;
+}
+
+function content_cover_url(content) {
+  const source = content && typeof content === "object" ? content : {};
+  const content_record = object_value(source, "content", "Content");
+  const assets = object_value(content_record, "assets", "Assets");
+  const resources = Array.isArray(source.resources) ? source.resources : [];
+  const resources_by_id = new Map(
+    resources.map((resource) => [
+      String(object_value(resource, "id", "ID") || ""),
+      resource,
+    ]),
+  );
+
+  for (const asset of Array.isArray(assets) ? assets : []) {
+    const role = String(object_value(asset, "role", "Role") || "")
+      .trim()
+      .toLowerCase();
+    if (role !== "cover") continue;
+
+    const linked_resources = object_value(
+      asset,
+      "download_resources",
+      "DownloadResources",
+    );
+    for (const linked_resource of Array.isArray(linked_resources)
+      ? linked_resources
+      : []) {
+      const resource_id = String(
+        object_value(linked_resource, "id", "ID") || "",
+      );
+      const resource = resources_by_id.get(resource_id) || linked_resource;
+      const asset_url = resource_file_url(resource);
+      if (resource.exists === true && asset_url) {
+        return asset_url;
+      }
+    }
+  }
+
+  return String(
+    first_non_empty(source.cover_url, source.CoverURL, source.coverUrl),
+  ).trim();
 }
 
 function platform_name(content) {
@@ -197,7 +263,17 @@ function content_type_label(value) {
 
 function normalize_task_status(status) {
   const value = String(status ?? "").trim().toLowerCase();
-  if (["2", "4", "downloading", "merging", "running"].includes(value)) {
+  if (
+    [
+      "1",
+      "2",
+      "4",
+      "preparing",
+      "downloading",
+      "merging",
+      "running",
+    ].includes(value)
+  ) {
     return "running";
   }
   if (["3", "paused"].includes(value)) {
@@ -214,6 +290,29 @@ function normalize_task_status(status) {
     return "failed";
   }
   return "waiting";
+}
+
+function resource_download_task_in_progress(resource, tasks) {
+  const task_id = String(
+    first_non_empty(
+      resource && resource.task_id,
+      resource && resource.TaskID,
+      resource && resource.TaskId,
+    ),
+  ).trim();
+  if (!task_id) return false;
+
+  const task = (Array.isArray(tasks) ? tasks : []).find(
+    (item) =>
+      String(first_non_empty(item && item.id, item && item.ID)).trim() ===
+      task_id,
+  );
+  return (
+    normalize_task_status(
+      first_non_empty(task && task.status, task && task.Status),
+    ) ===
+    "running"
+  );
 }
 
 function task_status(status) {
@@ -281,6 +380,38 @@ function format_bytes(value) {
   return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
 }
 
+function sort_content_assets(assets) {
+  return [...(Array.isArray(assets) ? assets : [])].sort((left, right) => {
+    const left_created_at = number_or_default(
+      first_non_empty(
+        left && left.created_at,
+        left && left.createdAt,
+        left && left.CreatedAt,
+      ),
+      0,
+    );
+    const right_created_at = number_or_default(
+      first_non_empty(
+        right && right.created_at,
+        right && right.createdAt,
+        right && right.CreatedAt,
+      ),
+      0,
+    );
+    return right_created_at - left_created_at;
+  });
+}
+
+function content_media_assets(assets) {
+  return sort_content_assets(assets).filter((asset) => {
+    const resources = first_non_empty(
+      asset && asset.download_resources,
+      asset && asset.DownloadResources,
+    );
+    return Array.isArray(resources) && resources.length > 0;
+  });
+}
+
 const content_detail_request = Timeless.kit.request_factory({
   headers: { "Content-Type": "application/json" },
   process(response) {
@@ -300,7 +431,9 @@ const content_detail_request = Timeless.kit.request_factory({
 });
 
 function ContentDetailViewModel(props) {
-  const detail_id_ = ref(detail_id_from_location());
+  const detail_id_ = ref(
+    String(prop_value(props.contentId) || detail_id_from_location()).trim(),
+  );
   const detail_ = ref(null);
   const loading_ = ref(false);
   const error_ = ref("");
@@ -384,7 +517,14 @@ function ContentDetailViewModel(props) {
       error_.as("缺少内容 ID");
       return Timeless.Result.Err(new Error("缺少内容 ID"));
     }
+    if (id === detail_id_.value && loading_.value) {
+      return null;
+    }
+    const detail_changed = id !== detail_id_.value;
     detail_id_.as(id);
+    if (detail_changed) {
+      detail_.as(null);
+    }
     const sequence = ++request_sequence;
     loading_.as(true);
     error_.as("");
@@ -407,15 +547,32 @@ function ContentDetailViewModel(props) {
     return result;
   }
 
+  if (props.contentId && typeof props.contentId.subscribe === "function") {
+    props.contentId.subscribe({
+      onChange(content_id) {
+        const id = String(content_id || "").trim();
+        if (!id || id === detail_id_.value) return;
+        load(id);
+      },
+    });
+  }
+
   const methods = {
     ready() {
-      return load(detail_id_.value);
+      return load(prop_value(props.contentId) || detail_id_.value);
     },
     refresh() {
       return load(detail_id_.value);
     },
     backToList() {
+      if (typeof props.onBack === "function") {
+        props.onBack();
+        return;
+      }
       window.location.assign("/content");
+    },
+    openDetail(content_id) {
+      return load(content_id);
     },
     openSource(content) {
       const url = content_source_url(content);
@@ -430,6 +587,7 @@ function ContentDetailViewModel(props) {
       }
     },
     sourceURL: content_source_url,
+    coverURL: content_cover_url,
     resourceFileURL: resource_file_url,
     platformName: platform_name,
     typeLabel: content_type_label,
@@ -437,6 +595,7 @@ function ContentDetailViewModel(props) {
     fileTypeIcon: file_type_icon,
     formatTime: format_time,
     formatBytes: format_bytes,
+    contentMediaAssets: content_media_assets,
   };
 
   const state = {

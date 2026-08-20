@@ -136,10 +136,12 @@ func (a *ChannelsAdapter) register(d *adapter.AdapterOptions) error {
 	}
 
 	refresh_interval := 0
+	sph_cookie := ""
 	if d.Config != nil {
 		refresh_interval = d.Config.GetInt("channels.refreshInterval")
+		sph_cookie = d.Config.GetString("cloudflare.sphCookie")
 	}
-	r := NewWebsocketRoutes(refresh_interval, d.Cookies)
+	r := NewWebsocketRoutes(refresh_interval, d.Cookies, sph_cookie)
 	bind_platform_status_events(r, d.Bus)
 	if d.Routes != nil {
 		r.RegisterRoutes(d.Routes)
@@ -198,16 +200,23 @@ func publish_wxchannels_sph_status(routes *WebsocketRoutes, bus *events.Bus) {
 	if routes == nil || routes.client == nil || bus == nil {
 		return
 	}
-	err := routes.client.CheckSphCookie()
-	available := err == nil
+	cookie_error := routes.client.CheckSphCookie()
+	available, reason := resolve_wxchannels_sph_status(routes.client.Available(), cookie_error)
 	bus.Publish(events.PlatformStatusChanged{
 		Platform:  PlatformID,
 		Key:       wxchannels_status_key_sph,
 		Name:      "视频号分享链接",
 		Status:    platform_status_name(available),
 		Available: available,
-		Reason:    wxchannels_sph_status_reason(err),
+		Reason:    reason,
 	})
+}
+
+func resolve_wxchannels_sph_status(page_available bool, cookie_error error) (bool, string) {
+	if page_available || cookie_error == nil {
+		return true, ""
+	}
+	return false, wxchannels_sph_status_reason(cookie_error)
 }
 
 func wxchannels_sph_status_reason(err error) string {

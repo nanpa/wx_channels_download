@@ -83,6 +83,7 @@ func (c *APIClient) handle_create_browse_history(ctx *gin.Context) {
 
 	if c.logger != nil {
 		c.logger.Info().
+			Str("file", "/api/handler_browse_history.go").
 			Str("api", "POST /api/browse_history/create").
 			Int("object_count", len(req.Objects)).
 			Msg("received browse history create request")
@@ -128,6 +129,7 @@ func (c *APIClient) handle_create_browse_history(ctx *gin.Context) {
 
 	if c.logger != nil {
 		c.logger.Info().
+			Str("file", "/api/handler_browse_history.go").
 			Str("api", "POST /api/browse_history/create").
 			Int("created_count", created_count).
 			Int("failed_count", failed_count).
@@ -146,6 +148,7 @@ func (c *APIClient) handle_create_browse_history(ctx *gin.Context) {
 func (c *APIClient) handle_fetch_browse_history_list(ctx *gin.Context) {
 	var body struct {
 		Username       *string  `json:"username"`
+		Keyword        string   `json:"keyword"`
 		PlatformId     string   `json:"platform_id"`
 		PlatformIds    []string `json:"platform_ids"`
 		Page           *int     `json:"page"`
@@ -232,7 +235,13 @@ func (c *APIClient) handle_fetch_browse_history_list(ctx *gin.Context) {
 		result.Err(ctx, 500, "browse history service not initialized")
 		return
 	}
-	browse_histories, err := c.browse_history_service.ListPlatforms(platform_ids, body.Username, page, page_size)
+	browse_histories, err := c.browse_history_service.ListPlatforms(
+		platform_ids,
+		body.Username,
+		page,
+		page_size,
+		body.Keyword,
+	)
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Error().

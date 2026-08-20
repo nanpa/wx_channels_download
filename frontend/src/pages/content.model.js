@@ -250,6 +250,7 @@ function ContentViewModel(props) {
   const scope_ = ref("task");
   const loading_ = ref(false);
   const error_ = ref("");
+  const detail_id_ = ref("");
   let request_sequence = 0;
 
   const ui = {
@@ -303,7 +304,7 @@ function ContentViewModel(props) {
       disabled: loading_.value,
       variant: "outline",
       onClick() {
-        return load(page_.value);
+        return load(1);
       },
     }),
     btn_retry$: new Timeless.vm.ButtonCore({
@@ -312,6 +313,10 @@ function ContentViewModel(props) {
       onClick() {
         return load(page_.value);
       },
+    }),
+    contentDetailDrawer$: new Timeless.vm.DialogCore({
+      title: "内容详情",
+      closeable: true,
     }),
   };
 
@@ -421,7 +426,7 @@ function ContentViewModel(props) {
       return load(1);
     },
     refresh() {
-      return load(page_.value);
+      return load(1);
     },
     search() {
       return load(1);
@@ -446,10 +451,12 @@ function ContentViewModel(props) {
       window.open(content.url, "_blank", "noopener,noreferrer");
     },
     openDetail(content) {
-      const href = content_detail_href(content);
-      if (href) {
-        window.location.assign(href);
-      }
+      const id = String(
+        first_non_empty(content && content.id, content && content.ID),
+      ).trim();
+      if (!id) return;
+      detail_id_.as(id);
+      ui.contentDetailDrawer$.show();
     },
     detailHref: content_detail_href,
     platformName: content_platform_name,
@@ -468,6 +475,7 @@ function ContentViewModel(props) {
     scope: scope_,
     loading: loading_,
     error: error_,
+    detail_id: detail_id_,
   };
 
   return { state, ui, methods };

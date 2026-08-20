@@ -1,10 +1,28 @@
-import {
-  Button,
-  Input,
-  Pagination,
-  Select,
-} from "../components.js";
 import { ContentViewModel } from "./content.model.js";
+import ContentDetailPageView from "./content_detail.js";
+
+function ContentDetailDrawer(props) {
+  const vm$ = props.store;
+  return Drawer(
+    {
+      store: vm$.ui.contentDetailDrawer$,
+      class: "wx-content-detail-drawer",
+      style: { width: "min(1120px, 100vw)" },
+    },
+    [
+      ContentDetailPageView({
+        app: props.app,
+        client: props.client,
+        history: props.history,
+        embedded: true,
+        contentId: vm$.state.detail_id,
+        onBack() {
+          vm$.ui.contentDetailDrawer$.hide();
+        },
+      }),
+    ],
+  );
+}
 
 function ContentPageView(props) {
   const vm$ = ContentViewModel(props);
@@ -38,6 +56,12 @@ function ContentPageView(props) {
           });
         },
       }),
+      ContentDetailDrawer({
+        store: vm$,
+        app: props.app,
+        client: props.client,
+        history: props.history,
+      }),
     ],
   );
 }
@@ -58,6 +82,7 @@ function ContentPageActionButton(props) {
         title: props.title || "",
         ...(props.attributes || {}),
       },
+      onClick: props.onClick,
       prefix: props.icon
         ? Timeless.Icon({ name: props.icon, size: props.iconSize || 16 })
         : null,
@@ -95,16 +120,16 @@ function ContentPageToolbar(props) {
             },
           }),
         ]),
-        Select({
-          store: vm$.ui.select_scope$,
-          class: "wx-content-scope-select wx-content-filter-select",
-          attributes: { "aria-label": "筛选内容范围" },
-        }),
-        Select({
-          store: vm$.ui.select_content_type$,
-          class: "wx-content-type-select wx-content-filter-select",
-          attributes: { "aria-label": "筛选内容类型" },
-        }),
+        // Select({
+        //   store: vm$.ui.select_scope$,
+        //   class: "wx-content-scope-select wx-content-filter-select",
+        //   attributes: { "aria-label": "筛选内容范围" },
+        // }),
+        // Select({
+        //   store: vm$.ui.select_content_type$,
+        //   class: "wx-content-type-select wx-content-filter-select",
+        //   attributes: { "aria-label": "筛选内容类型" },
+        // }),
       ]),
       View({ class: "wx-content-filter-actions" }, [
         ContentPageActionButton({
@@ -113,11 +138,15 @@ function ContentPageToolbar(props) {
           label: "搜索",
           variant: "primary",
           attributes: { type: "submit" },
+          onClick(event) {
+            event.preventDefault();
+            vm$.methods.search();
+          },
         }),
         ContentPageActionButton({
           store: vm$.ui.btn_refresh$,
-          icon: "refresh-cw",
-          label: "刷新",
+          icon: "rotate-ccw",
+          label: "重置",
         }),
       ]),
     ],
@@ -135,16 +164,12 @@ function ContentRowCover(props) {
   }
   return View({ class: "wx-content-row-cover-wrap" }, [
     fallback,
-    Img({
+    LazyImg({
       class: "wx-content-row-cover",
       src: content.cover_url,
       alt: content.title,
       attributes: {
-        loading: "lazy",
         referrerpolicy: "no-referrer",
-      },
-      onError(event) {
-        event.target.style.display = "none";
       },
     }),
   ]);

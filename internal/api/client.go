@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
@@ -28,6 +29,8 @@ type APIClient struct {
 	logger        *zerolog.Logger
 	http_handler  http.Handler
 	static_assets *webassets.Registry
+	mcp_handler   http.Handler
+	mcp_enabled   atomic.Bool
 
 	bus                 *events.Bus
 	proxy_status_mu     sync.RWMutex
@@ -47,6 +50,8 @@ type APIClient struct {
 	download_task_service  *services.DownloadTaskService
 	fs_service             *services.FSService
 	scraper_job_service    *services.ScraperJobService
+	update_service         *services.UpdateService
+	restart_service        *services.ApplicationRestartService
 }
 
 func NewAPIClient(
@@ -56,8 +61,10 @@ func NewAPIClient(
 	static_assets *webassets.Registry,
 	downloader *hermes.HermesEngine,
 	hook_manager *hermes.HookManager,
+	update_service *services.UpdateService,
+	restart_service *services.ApplicationRestartService,
 ) *APIClient {
-	logger := parent_logger.With().Logger()
+	logger := parent_logger.With().Str("component", "APIClient").Logger()
 	engine := gin.New()
 	engine.Use(
 		gin.LoggerWithConfig(gin.LoggerConfig{
@@ -86,6 +93,8 @@ func NewAPIClient(
 		browse_history_service: browse_history_service,
 		fs_service:             fs_service,
 		downloader:             downloader,
+		update_service:         update_service,
+		restart_service:        restart_service,
 	}
 	api_client.scraper_job_service = services.NewScraperJobService(
 		nil,
@@ -97,6 +106,7 @@ func NewAPIClient(
 		db, &logger, downloader, hook_manager,
 		cfg.WorkDir, cfg.DownloadDir,
 	)
+	api_client.mcp_handler = api_client.new_mcp_handler()
 
 	api_client.broadcaster = new_task_broadcaster()
 	api_client.downloader.OnEvent(func(event hermes.EventType, data hermes.EventData) {

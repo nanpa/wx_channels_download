@@ -26,24 +26,22 @@ require (
 	github.com/Danny-Dasilva/CycleTLS/cycletls v1.0.23
 	github.com/adrg/xdg v0.4.0
 	github.com/andybalholm/brotli v1.1.1
-	github.com/blang/semver v3.5.1+incompatible
 	github.com/dop251/goja v0.0.0-20241024094426-79f3a7efcdbd
-	github.com/tetratelabs/wazero v1.7.3
 	github.com/ebitengine/oto/v3 v3.2.0-alpha.4
 	github.com/expr-lang/expr v1.16.9
 	github.com/fatih/color v1.16.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/glebarez/sqlite v1.11.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/inconshreveable/go-update v0.0.0-20160112193335-8152e7eb6ccf
-	github.com/ltaoo/echo v0.12.0
-	github.com/ltaoo/velo v1.0.1
+	github.com/ltaoo/echo v0.12.1
+	github.com/ltaoo/velo v1.1.1
 	github.com/pterm/pterm v0.12.50
 	github.com/qtgolang/SunnyNet v1.4.0
 	github.com/rs/zerolog v1.34.0
 	github.com/samber/lo v1.39.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.16.0
+	github.com/tetratelabs/wazero v1.7.3
 	github.com/tjfoc/gmsm v1.4.1
 	github.com/zeebo/blake3 v0.2.4
 	golang.org/x/crypto v0.46.0
@@ -54,13 +52,14 @@ require (
 )
 
 require (
+	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	gorm.io/driver/sqlite v1.6.0
+	gorm.io/driver/sqlite v1.6.0 // indirect
 	modernc.org/libc v1.22.5 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect
@@ -70,6 +69,7 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown v1.4.1
 	github.com/PuerkitoBio/goquery v1.8.1
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
+	github.com/microcosm-cc/bluemonday v1.0.27
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
 	golang.org/x/image v0.23.0
 )
@@ -112,6 +112,7 @@ require (
 	github.com/Danny-Dasilva/fhttp v0.0.0-20231127034941-9494939f30fa // indirect
 	github.com/Trisia/gosysproxy v1.1.0 // indirect
 	github.com/andybalholm/cascadia v1.3.2 // indirect
+	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cloudflare/circl v1.5.0 // indirect
@@ -136,6 +137,7 @@ require (
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
 	github.com/gookit/color v1.5.4 // indirect
+	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
@@ -188,6 +190,7 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
+	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/vishvananda/netns v0.0.4 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect

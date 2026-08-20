@@ -31,25 +31,23 @@ function ContentDetailAction(props) {
 
 function ContentDetailCover(props) {
   const content = props.content;
+  const cover_url = props.store.methods.coverURL(content);
   const fallback = View({ class: "wx-content-cover-fallback" }, [
     Timeless.Icon({ name: "file", size: 32 }),
     View({ class: "wx-content-cover-type" }, [
       props.store.methods.typeLabel(content.content_type),
     ]),
   ]);
-  if (!content.cover_url) {
+  if (!cover_url) {
     return fallback;
   }
   return View({ class: "wx-content-cover-wrap" }, [
-    fallback,
-    Img({
+    LazyImg({
       class: "wx-content-cover",
-      src: content.cover_url,
+      src: cover_url,
       alt: content.title,
-      attributes: { loading: "lazy", referrerpolicy: "no-referrer" },
-      onError(event) {
-        event.target.style.display = "none";
-      },
+      loading: "eager",
+      attributes: { referrerpolicy: "no-referrer" },
     }),
   ]);
 }
@@ -520,15 +518,16 @@ function content_asset_previews(content, vm$) {
     });
   };
 
-  for (const asset of content_detail_assets(content)) {
+  const content_assets = vm$.methods.contentMediaAssets(
+    content_detail_assets(content),
+  );
+  for (const asset of content_assets) {
     const linked_resources = content_asset_resources(
       asset,
       content.resources,
     );
     if (linked_resources.length) {
       linked_resources.forEach((resource) => append_resource(resource, asset));
-    } else {
-      append_resource({}, asset);
     }
   }
 
@@ -671,6 +670,7 @@ function ContentDetailHTMLDocument(props) {
 function ContentDetailMediaStage(props) {
   const vm$ = props.store;
   const media = props.media;
+  const cover_url = vm$.methods.coverURL(props.content);
   let player = null;
   if (!media.available) {
     player = View({ class: "wx-content-detail-media-file-stage" }, [
@@ -686,7 +686,7 @@ function ContentDetailMediaStage(props) {
     player = Timeless.Video({
       class: "wx-content-detail-media-video",
       src: media.url,
-      poster: props.content.cover_url,
+      poster: cover_url,
       controls: true,
       playsInline: true,
       preload: "metadata",
@@ -947,7 +947,10 @@ function ContentDetailResource(props) {
             ["已删除"],
           )
         : null,
-      !deleted && resource.exists && vm$.methods.resourceFileURL(resource)
+      !deleted &&
+      !resource.download_task_in_progress &&
+      resource.exists &&
+      vm$.methods.resourceFileURL(resource)
         ? ContentDetailAction({
             icon: "folder-open",
             title: "打开文件",
@@ -1063,7 +1066,9 @@ function ContentDetailRelation(props) {
   const title = related.title || related.description || id || "未命名内容";
   const subtype = related.subtype || related.type || "内容";
   const clickable = Boolean(
-    id && props.history && typeof props.history.push === "function",
+    id &&
+      (typeof props.onOpenDetail === "function" ||
+        (props.history && typeof props.history.push === "function")),
   );
   return View(
     {
@@ -1077,6 +1082,10 @@ function ContentDetailRelation(props) {
       attributes: clickable ? { type: "button", title: `查看 ${title}` } : {},
       onClick() {
         if (!clickable) return;
+        if (typeof props.onOpenDetail === "function") {
+          props.onOpenDetail(id);
+          return;
+        }
         props.history.push("root.shell.content_detail", { id });
       },
     },
@@ -1110,7 +1119,11 @@ function ContentDetailRelations(props) {
     For({
       each: items,
       render(item) {
-        return ContentDetailRelation({ item, history: props.history });
+        return ContentDetailRelation({
+          item,
+          history: props.history,
+          onOpenDetail: props.onOpenDetail,
+        });
       },
     }),
   ]);
@@ -1153,13 +1166,21 @@ function ContentDetailMain(props) {
       title: "内容",
       children: [ContentDetailExtension({ store: vm$, content })],
     }),
-    ContentDetailSection({
-      title: "关联内容",
-      count: content.relations ? content.relations.total : 0,
-      children: [
-        ContentDetailRelations({ content, history: props.history }),
-      ],
-    }),
+    ...(content.relations && content.relations.has_content
+      ? [
+          ContentDetailSection({
+            title: "关联内容",
+            count: content.relations.total,
+            children: [
+              ContentDetailRelations({
+                content,
+                history: props.history,
+                onOpenDetail: props.onOpenDetail,
+              }),
+            ],
+          }),
+        ]
+      : []),
     ContentDetailSection({
       title: "文件",
       count: content.resources.length,
@@ -1224,6 +1245,7 @@ function ContentDetailBody(props) {
                   store: vm$,
                   content: vm$.state.detail.value,
                   history: props.history,
+                  onOpenDetail: props.onOpenDetail,
                 });
               },
               else() {
@@ -1251,7 +1273,13 @@ function ContentDetailPageView(props) {
     },
     [
       ContentDetailHeader({ store: vm$ }),
-      ContentDetailBody({ store: vm$, history: props.history }),
+      ContentDetailBody({
+        store: vm$,
+        history: props.history,
+        onOpenDetail: props.embedded
+          ? (content_id) => vm$.methods.openDetail(content_id)
+          : null,
+      }),
     ],
   );
 }

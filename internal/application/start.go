@@ -16,7 +16,6 @@ import (
 
 	"wx_channel/frontend"
 	"wx_channel/internal/adapter"
-	_ "wx_channel/internal/adapter/builtin"
 	"wx_channel/internal/api"
 	"wx_channel/internal/buildtags"
 	"wx_channel/internal/config"
@@ -114,26 +113,29 @@ func start(cfg *config.Config, options startOptions) error {
 	interceptor_srv := interceptor.NewInterceptorServer(cfg, cert_files, logger)
 	interceptor_srv.SubscribeEvents(bus)
 
+	target_protocol := api_cfg.Protocol
+	target_hostname := api_cfg.Hostname
+	target_port := api_cfg.Port
 	if cfg.GetBool("download.remoteServer.enabled") {
-		protocol := cfg.GetString("download.remoteServer.protocol")
-		hostname := cfg.GetString("download.remoteServer.hostname")
-		port := cfg.GetInt("download.remoteServer.port")
+		target_protocol = cfg.GetString("download.remoteServer.protocol")
+		target_hostname = cfg.GetString("download.remoteServer.hostname")
+		target_port = cfg.GetInt("download.remoteServer.port")
 		logger.Info().
 			Str("file", "internal/application/start.go").
-			Str("protocol", protocol).
-			Str("hostname", hostname).
-			Int("port", port).
+			Str("protocol", target_protocol).
+			Str("hostname", target_hostname).
+			Int("port", target_port).
 			Msg("enable remote server")
-		plugin := &proxy.Plugin{
-			Match: "localhost.weixin.qq.com",
-			Target: &proxy.TargetConfig{
-				Protocol: protocol,
-				Host:     hostname,
-				Port:     port,
-			},
-		}
-		interceptor_srv.Interceptor.AddPostPlugin(plugin)
 	}
+	plugin := &proxy.Plugin{
+		Match: "weixin110.qq.com",
+		Target: &proxy.TargetConfig{
+			Protocol: target_protocol,
+			Host:     target_hostname,
+			Port:     target_port,
+		},
+	}
+	interceptor_srv.Interceptor.AddPostPlugin(plugin)
 
 	table_data := pterm.TableData{{"Item", "Path"}, {"Work Dir", cfg.WorkDir}, {"Data Path", cfg.DBPath}}
 	if cfg.LogPath() != "" {
@@ -190,7 +192,13 @@ func start(cfg *config.Config, options startOptions) error {
 	downloader.SetPostprocessor(adapter.NewPlatformPostprocessor(b.DB, *logger, api_cfg.DownloadDir))
 
 	// --- API service ---
-	api_srv := api.NewAPIServer(api_cfg, logger, b.DB, static_assets, downloader, hook_manager)
+	restart_service := services.NewApplicationRestartService(services.ApplicationRestartServiceOptions{
+		RequestRestart: func() error {
+			return restart_current_process(stop)
+		},
+	})
+	update_service := new_update_service(api_cfg.Version, restart_service)
+	api_srv := api.NewAPIServer(api_cfg, logger, b.DB, static_assets, downloader, hook_manager, update_service, restart_service)
 	api_srv.SubscribeEvents(bus)
 	publish_registered_adapter_statuses(bus)
 	// admin_srv := admin.NewAdminServer(cfg, b, bus)
@@ -269,12 +277,15 @@ func start(cfg *config.Config, options startOptions) error {
 	// 	return
 	// }
 	// color.Green(fmt.Sprintf("GUI/Admin service started successfully, address: %v", admin_srv.Addr()))
+	api_srv.APIClient.StartMCPServer()
 	if err := api_srv.Start(); err != nil {
 		cleanup()
 		return fmt.Errorf("failed to start API service: %w", err)
 	}
 	api_started = true
-	color.Green(fmt.Sprintf("API service started successfully, address: %v", api_srv.Addr()))
+	api_url := http_service_url(api_srv.Addr())
+	color.Green(fmt.Sprintf("API service started successfully, address: %v", api_url))
+	color.Green(fmt.Sprintf("MCP server started successfully, address: %v/mcp", api_url))
 
 	if proxy_enabled {
 		interceptor_start_attempted = true
@@ -303,7 +314,7 @@ func start(cfg *config.Config, options startOptions) error {
 			cleanup()
 			return fmt.Errorf("failed to start proxy service: %w", err)
 		}
-		color.Green(fmt.Sprintf("Proxy service started successfully, address: %v", interceptor_srv.Addr()))
+		color.Green(fmt.Sprintf("Proxy service started successfully, address: %v", http_service_url(interceptor_srv.Addr())))
 
 		if !buildtags.UsingSunnyNet {
 			if interceptor_srv.ProxyTun() {
@@ -384,6 +395,10 @@ func start(cfg *config.Config, options startOptions) error {
 	}
 	cleanup()
 	return nil
+}
+
+func http_service_url(addr string) string {
+	return "http://" + addr
 }
 
 func publish_registered_adapter_statuses(bus *events.Bus) {

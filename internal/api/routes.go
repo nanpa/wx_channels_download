@@ -26,6 +26,7 @@ func (c *APIClient) SetupRoutes() {
 	// GET remains available for callers migrating from the former synchronous API.
 	c.engine.GET("/api/scraper/fetch", c.handle_scraper_fetch)
 	c.engine.GET("/api/scraper/job", c.handle_scraper_job)
+	c.engine.GET("/api/scraper/platform/status", c.handle_scraper_platform_status)
 	c.engine.POST("/api/scraper/fetch/interrupt", c.handle_scraper_fetch_interrupt)
 	c.engine.GET("/api/scraper/cache/content", c.handle_scraper_cache_content)
 	c.engine.POST("/api/scraper/cache/clear", c.handle_scraper_cache_clear)
@@ -75,6 +76,9 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.POST("/api/v1/download_task/check_files", c.handle_check_download_task_files)
 	c.engine.GET("/api/v1/download_task/list", c.handle_list_download_task)
 	c.engine.GET("/api/v1/download_task/detail", c.handle_download_task_detail)
+	c.engine.POST("/api/v1/third_party_downloader/probe", c.handle_probe_third_party_downloader)
+	c.engine.POST("/api/v1/third_party_downloader/create", c.handle_create_third_party_download)
+	c.engine.POST("/api/v1/third_party_downloader/status", c.handle_third_party_download_status)
 	// c.engine.GET("/api/influencers", c.handle_influencer_list)
 	// c.engine.GET("/api/influencers/:id", c.handle_influencer_get)
 	// c.engine.POST("/api/influencers", c.handle_influencer_create)
@@ -92,6 +96,19 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.GET("/api/logs", c.handle_logs)
 	c.engine.POST("/report", c.handle_frontend_report)
 	c.engine.GET("/api/status", c.handle_status)
+	c.engine.GET("/api/config", c.handle_application_config_get)
+	c.engine.POST("/api/config", c.handle_application_config_update)
+	c.engine.GET("/api/restart/status", c.handle_application_restart_status)
+	c.engine.GET("/api/update/check", c.handle_update_check)
+	c.engine.GET("/api/update/status", c.handle_update_status)
+	c.engine.POST("/api/update/download", c.handle_update_download)
+	c.engine.POST("/api/update/restart", c.handle_update_restart)
+	c.engine.GET("/api/mcp/status", c.handle_mcp_status)
+	c.engine.POST("/api/mcp/enable", c.handle_mcp_enable)
+	c.engine.POST("/api/mcp/disable", c.handle_mcp_disable)
+	c.engine.POST("/mcp", c.handle_mcp_transport)
+	c.engine.GET("/mcp", c.handle_mcp_transport)
+	c.engine.DELETE("/mcp", c.handle_mcp_transport)
 	c.engine.POST("/api/service/start", c.handle_service_start)
 	c.engine.POST("/api/service/stop", c.handle_service_stop)
 	c.engine.POST("/api/service/config", c.handle_service_config_update)
@@ -109,9 +126,6 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.POST("/api/proxy/certificate/uninstall_by_name", c.handle_proxy_certificate_uninstall_by_name)
 	c.engine.GET("/api/cookies/extract", c.handle_cookie_extract)
 	c.engine.POST("/api/cookies/update", c.handle_cookie_update)
-	c.engine.GET("/api/certificate/root/status", c.handle_root_certificate_status)
-	c.engine.POST("/api/certificate/root/install", c.handle_root_certificate_install)
-	c.engine.POST("/api/certificate/root/uninstall", c.handle_root_certificate_uninstall)
 
 	c.engine.NoRoute(func(ctx *gin.Context) {
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
@@ -126,7 +140,7 @@ func (c *APIClient) handle_favicon(ctx *gin.Context) {
 		return
 	}
 	ctx.Header("Content-Type", "image/x-icon")
-	ctx.Header("Cache-Control", "public, max-age=86400")
+	ctx.Header("Cache-Control", "public, max-age=31536000, immutable")
 	ctx.Header("Content-Length", strconv.Itoa(len(data)))
 	if ctx.Request.Method == http.MethodHead {
 		ctx.Status(http.StatusOK)

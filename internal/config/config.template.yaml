@@ -21,15 +21,6 @@ api:
   hostname: "127.0.0.1"
   port: 2022
 
-cookie:
-  uuid: ""
-  password: ""
-  key: ""
-
-update:
-  proxy: ""
-  mirror: ""
-
 db:
   type: "sqlite"
   host: ""
@@ -52,6 +43,24 @@ proxy:
   defaultInterface: ""
   skipInstallRootCert: false
   upstreamProxy: ""
+
+cookie:
+  uuid: ""
+  password: ""
+  key: ""
+
+update:
+  sources:
+    - type: github
+      priority: 1
+      github_repo: ltaoo/wx_channels_download
+      github_token: ""
+      manifest_url: ""
+      self_url: ""
+      enabled: true
+      need_check_checksum: false
+  proxy: ""
+  mirror: ""
 
 channels:
   enabled: true
@@ -83,3 +92,4 @@ cloudflare:
   d1Name: "mp-rss-db"
   sphWorkerName: "sph"
   sphCookie: ""
+  sphCredential: ""
