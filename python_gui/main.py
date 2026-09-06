@@ -131,7 +131,10 @@ class BackendManager:
                 if line.strip() and len(line) > len(line.lstrip())
             ]
             if child_indents:
-                direct_indent = min(child_indents)
+                # Preserve the indentation chosen by the core's first proxy
+                # key.  Using the minimum would mistake a malformed two-space
+                # line appended by an old GUI for the real four-space level.
+                direct_indent = child_indents[0]
                 proxy_keys: set[str] = set()
                 repaired: list[str] = []
                 for index, line in enumerate(cleaned):
@@ -235,7 +238,7 @@ class BackendManager:
             for line in lines[proxy_start + 1 : proxy_end]
             if line.strip() and len(line) > len(line.lstrip())
         ]
-        direct_indent = min(child_indents, default=2)
+        direct_indent = child_indents[0] if child_indents else 2
         seen: set[str] = set()
         for index in range(proxy_start + 1, proxy_end):
             line = lines[index]
