@@ -102,18 +102,51 @@ class BackendManager:
         self._repair_legacy_config()
 
     def _repair_legacy_config(self) -> None:
-        """Remove an invalid key written by early GUI builds.
+        """Repair proxy keys written by older GUI builds.
 
         The Go configuration writer canonicalizes Viper keys to lower case.
         Older GUI releases added a second, camel-case ``skipInstallRootCert``
         key outside the expected schema.  Some Go/YAML versions reject that
         legacy file entirely, preventing even the API from starting.
+
+        Recent core versions also rewrite YAML with four-space indentation.
+        Older GUI versions assumed two spaces and could append duplicate proxy
+        keys at the wrong indentation, making the entire file invalid. Remove
+        only those duplicate, wrongly-indented keys before the core parses it.
         """
         try:
             lines = self.config.read_text(encoding="utf-8").splitlines(keepends=True)
         except OSError:
             return
         cleaned = [line for line in lines if line.lstrip().split(":", 1)[0].strip() != "skipInstallRootCert"]
+        proxy_start = next((index for index, line in enumerate(cleaned) if line.strip() == "proxy:" and not line[0].isspace()), -1)
+        if proxy_start >= 0:
+            proxy_end = next(
+                (index for index in range(proxy_start + 1, len(cleaned)) if cleaned[index] and not cleaned[index][0].isspace()),
+                len(cleaned),
+            )
+            child_indents = [
+                len(line) - len(line.lstrip())
+                for line in cleaned[proxy_start + 1 : proxy_end]
+                if line.strip() and len(line) > len(line.lstrip())
+            ]
+            if child_indents:
+                direct_indent = min(child_indents)
+                proxy_keys: set[str] = set()
+                repaired: list[str] = []
+                for index, line in enumerate(cleaned):
+                    if not (proxy_start < index < proxy_end) or ":" not in line:
+                        repaired.append(line)
+                        continue
+                    indent = len(line) - len(line.lstrip())
+                    key = line.lstrip().split(":", 1)[0].strip().lower()
+                    if key in {"enabled", "system", "skipinstallrootcert"}:
+                        if indent != direct_indent and key in proxy_keys:
+                            continue
+                        if indent == direct_indent:
+                            proxy_keys.add(key)
+                    repaired.append(line)
+                cleaned = repaired
         if len(cleaned) != len(lines):
             self.config.write_text("".join(cleaned), encoding="utf-8")
 
@@ -197,12 +230,20 @@ class BackendManager:
         if proxy_start < 0:
             raise RuntimeError("配置文件中没有找到 proxy 配置段。")
 
+        child_indents = [
+            len(line) - len(line.lstrip())
+            for line in lines[proxy_start + 1 : proxy_end]
+            if line.strip() and len(line) > len(line.lstrip())
+        ]
+        direct_indent = min(child_indents, default=2)
         seen: set[str] = set()
         for index in range(proxy_start + 1, proxy_end):
             line = lines[index]
             # Only edit direct children of proxy.  Earlier code also changed
-            # proxy.tcprelay.enabled because it matched this key by name.
-            if not line.startswith("  ") or line.startswith("    ") or ":" not in line:
+            # proxy.tcprelay.enabled because it matched this key by name. The
+            # core may format its YAML with either two or four spaces.
+            indent = len(line) - len(line.lstrip())
+            if indent != direct_indent or ":" not in line:
                 continue
             key = line.lstrip().split(":", 1)[0].strip()
             canonical_key = key.lower()
@@ -213,7 +254,7 @@ class BackendManager:
                 seen.add(target_key)
         missing = [key for key in values if key not in seen]
         if missing:
-            lines[proxy_end:proxy_end] = [f"  {key}: {values[key]}\n" for key in missing]
+            lines[proxy_end:proxy_end] = [f"{' ' * direct_indent}{key}: {values[key]}\n" for key in missing]
         self.config.write_text("".join(lines), encoding="utf-8")
 
     def stop(self) -> None:
