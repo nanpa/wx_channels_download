@@ -81,17 +81,7 @@ func is_server_command(cmd *cobra.Command) bool {
 	return false
 }
 
-func apply_server_config_defaults() {
-	if Cfg == nil {
-		return
-	}
-	Cfg.Update("proxy.skipInstallRootCert", true)
-	Cfg.Update("proxy.enabled", false)
-	Cfg.Update("proxy.system", false)
-}
-
 func run_server() error {
-	apply_server_config_defaults()
 	return application.Start(Cfg)
 }
 
