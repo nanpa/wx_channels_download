@@ -766,6 +766,21 @@ class Launcher(tk.Tk):
                     time.sleep(0.5)
                 if not self.backend.is_ready(timeout=0.5):
                     raise RuntimeError("初始化未完成：请确认 Windows 管理员授权已允许。")
+                certificate_status = api_json("/api/proxy/status").get("certificate") or {}
+                if certificate_status.get("is_legacy"):
+                    # SunnyNet's legacy root certificate uses a shared,
+                    # hard-coded key pair. Generate and install a unique root
+                    # certificate while this initialization process is already
+                    # elevated, then restart the proxy with the new cert.
+                    api_json("/api/proxy/certificate/generate", "POST", {
+                        "name": "WxChannelsDownload Local",
+                        "install": True,
+                        "restart": True,
+                        "valid_years": 10,
+                    })
+                capture_deadline = time.monotonic() + 12
+                while not self.capture_is_ready() and time.monotonic() < capture_deadline:
+                    time.sleep(0.5)
                 if not self.capture_is_ready():
                     raise RuntimeError("证书或系统代理未能启用，请确认已允许管理员授权。")
             except Exception as exc:
