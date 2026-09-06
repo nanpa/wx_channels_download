@@ -47,18 +47,15 @@ type BrowseHistoryListQuery struct {
 
 // LogListQuery describes a read-only application log query.
 type LogListQuery struct {
-	Page       int
-	PageSize   int
-	MaxBytes   int
-	Keyword    string
-	Source     string
-	Levels     []string
-	FormatJSON bool
+	Page     int
+	PageSize int
+	MaxBytes int
+	Keyword  string
+	Source   string
+	Levels   []string
 }
 
-// DataReader supplies process-local read access for MCP data tools. The
-// embedded MCP server uses the application's DB and runtime services; stdio
-// servers may omit it and fall back to the downloader HTTP API.
+// DataReader supplies read-only data tools.
 type DataReader interface {
 	ListDownloadTasks(ctx context.Context, query DownloadTaskListQuery) (any, error)
 	GetDownloadTaskDetail(ctx context.Context, task_id int) (any, error)
@@ -66,6 +63,45 @@ type DataReader interface {
 	ListBrowseHistory(ctx context.Context, query BrowseHistoryListQuery) (any, error)
 	ListLogs(ctx context.Context, query LogListQuery) (any, error)
 	GetCertificateStatus(ctx context.Context) (any, error)
+}
+
+// DeleteDownloadTaskResult is one item in a batch deletion result.
+type DeleteDownloadTaskResult struct {
+	TaskID     int    `json:"task_id"`
+	Success    bool   `json:"success"`
+	StatusText string `json:"status_text,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// DownloadTaskDeleter supplies download task deletion tools.
+type DownloadTaskDeleter interface {
+	DeleteDownloadTasks(ctx context.Context, task_ids []int, delete_files bool) ([]DeleteDownloadTaskResult, error)
+}
+
+// DownloadTaskCreateRequest is the transport-neutral input for one task.
+type DownloadTaskCreateRequest struct {
+	Platform        string          `json:"platform"`
+	Content         json.RawMessage `json:"content"`
+	BuildFromFetch  bool            `json:"build_from_fetch"`
+	ResourceIndexes []int           `json:"resource_indexes,omitempty"`
+	DownloadDir     string          `json:"download_dir"`
+	Filename        string          `json:"filename"`
+	Config          map[string]any  `json:"config"`
+	AutoStart       *bool           `json:"auto_start"`
+	ParentTaskID    *int            `json:"parent_task_id,omitempty"`
+	RelationType    string          `json:"relation_type,omitempty"`
+}
+
+// DownloadTaskCreateResult is the normalized result consumed by MCP tools.
+type DownloadTaskCreateResult struct {
+	Task    any
+	IDs     []int
+	Skipped bool
+}
+
+// DownloadTaskCreator supplies process-local download task creation.
+type DownloadTaskCreator interface {
+	CreateDownloadTask(ctx context.Context, request DownloadTaskCreateRequest) (*DownloadTaskCreateResult, error)
 }
 
 type download_task_list_arguments struct {
@@ -78,6 +114,11 @@ type download_task_list_arguments struct {
 
 type download_task_detail_arguments struct {
 	ID int `json:"id"`
+}
+
+type delete_download_tasks_arguments struct {
+	TaskIDs     []int `json:"task_ids"`
+	DeleteFiles bool  `json:"delete_files"`
 }
 
 type account_list_arguments struct {
@@ -96,13 +137,12 @@ type browse_history_list_arguments struct {
 }
 
 type log_list_arguments struct {
-	Page       int      `json:"page"`
-	PageSize   int      `json:"page_size"`
-	MaxBytes   int      `json:"max_bytes"`
-	Keyword    string   `json:"keyword"`
-	Source     string   `json:"source"`
-	Levels     []string `json:"levels"`
-	FormatJSON bool     `json:"format_json"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"page_size"`
+	MaxBytes int      `json:"max_bytes"`
+	Keyword  string   `json:"keyword"`
+	Source   string   `json:"source"`
+	Levels   []string `json:"levels"`
 }
 
 func data_tool_definitions() []any {
@@ -145,6 +185,36 @@ func data_tool_definitions() []any {
 				"required": []string{"id"},
 			},
 		),
+		map[string]any{
+			"name":        "delete_download_tasks",
+			"title":       "删除下载任务",
+			"description": "用户明确确认后，停止并软删除指定下载任务。delete_files 默认为 false，仅删除任务记录；设为 true 时同时安全删除关联的最终文件、临时文件和直播录制目录。每个任务独立返回删除结果。",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"task_ids": map[string]any{
+						"type":        "array",
+						"description": "要删除的下载任务 ID。",
+						"minItems":    1,
+						"uniqueItems": true,
+						"items":       data_positive_id_schema("下载任务 ID。"),
+					},
+					"delete_files": map[string]any{
+						"type":        "boolean",
+						"default":     false,
+						"description": "是否同时删除任务关联的本地文件。",
+					},
+				},
+				"required": []string{"task_ids"},
+			},
+			"annotations": map[string]any{
+				"readOnlyHint":    false,
+				"destructiveHint": true,
+				"idempotentHint":  true,
+				"openWorldHint":   false,
+			},
+		},
 		data_tool_definition(
 			"get_accounts",
 			"获取账号列表",
@@ -217,11 +287,6 @@ func data_tool_definitions() []any {
 						"description": "日志级别列表，例如 debug、info、warn、error。",
 						"uniqueItems": true,
 						"items":       map[string]any{"type": "string", "minLength": 1},
-					},
-					"format_json": map[string]any{
-						"type":        "boolean",
-						"default":     false,
-						"description": "是否为 JSON 日志附加格式化文本。",
 					},
 				},
 			},
@@ -340,6 +405,26 @@ func (s *Server) get_download_task_detail(ctx context.Context, raw_arguments jso
 	return s.call_read_api(ctx, http.MethodGet, "/api/v1/download_task/detail?"+values.Encode(), nil)
 }
 
+func (s *Server) delete_download_tasks(ctx context.Context, raw_arguments json.RawMessage) (map[string]any, error) {
+	var arguments delete_download_tasks_arguments
+	if err := decode_tool_arguments(raw_arguments, &arguments); err != nil {
+		return nil, err
+	}
+	if len(arguments.TaskIDs) == 0 {
+		return nil, fmt.Errorf("task_ids 不能为空")
+	}
+	for _, task_id := range arguments.TaskIDs {
+		if task_id <= 0 {
+			return nil, fmt.Errorf("task_ids 中的任务 ID 必须是正整数")
+		}
+	}
+	results, err := s.download_task_deleter.DeleteDownloadTasks(ctx, arguments.TaskIDs, arguments.DeleteFiles)
+	if err != nil {
+		return nil, err
+	}
+	return successful_tool_result(map[string]any{"results": results})
+}
+
 func (s *Server) get_accounts(ctx context.Context, raw_arguments json.RawMessage) (map[string]any, error) {
 	var arguments account_list_arguments
 	if err := decode_tool_arguments(raw_arguments, &arguments); err != nil {
@@ -424,13 +509,12 @@ func (s *Server) get_logs(ctx context.Context, raw_arguments json.RawMessage) (m
 		return nil, fmt.Errorf("max_bytes 必须在 %d 到 %d 之间", 64*1024, max_log_max_bytes)
 	}
 	query := LogListQuery{
-		Page:       page,
-		PageSize:   page_size,
-		MaxBytes:   max_bytes,
-		Keyword:    strings.TrimSpace(arguments.Keyword),
-		Source:     strings.TrimSpace(arguments.Source),
-		Levels:     normalize_string_list(arguments.Levels),
-		FormatJSON: arguments.FormatJSON,
+		Page:     page,
+		PageSize: page_size,
+		MaxBytes: max_bytes,
+		Keyword:  strings.TrimSpace(arguments.Keyword),
+		Source:   strings.TrimSpace(arguments.Source),
+		Levels:   normalize_string_list(arguments.Levels),
 	}
 	if s.data_reader != nil {
 		value, read_err := s.data_reader.ListLogs(ctx, query)
@@ -440,13 +524,12 @@ func (s *Server) get_logs(ctx context.Context, raw_arguments json.RawMessage) (m
 		return successful_tool_result(value)
 	}
 	values := url.Values{
-		"page":        []string{strconv.Itoa(query.Page)},
-		"page_size":   []string{strconv.Itoa(query.PageSize)},
-		"max_bytes":   []string{strconv.Itoa(query.MaxBytes)},
-		"keyword":     []string{query.Keyword},
-		"source":      []string{query.Source},
-		"levels":      []string{strings.Join(query.Levels, ",")},
-		"format_json": []string{strconv.FormatBool(query.FormatJSON)},
+		"page":      []string{strconv.Itoa(query.Page)},
+		"page_size": []string{strconv.Itoa(query.PageSize)},
+		"max_bytes": []string{strconv.Itoa(query.MaxBytes)},
+		"keyword":   []string{query.Keyword},
+		"source":    []string{query.Source},
+		"levels":    []string{strings.Join(query.Levels, ",")},
 	}
 	return s.call_read_api(ctx, http.MethodGet, "/api/logs?"+values.Encode(), nil)
 }

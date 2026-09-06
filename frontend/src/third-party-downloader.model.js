@@ -196,24 +196,6 @@ function show_downloader_success(message) {
   }
 }
 
-const third_party_downloader_request = Timeless.kit.request_factory({
-  headers: { "Content-Type": "application/json" },
-  process(response) {
-    if (response.error) {
-      return Timeless.Result.Err(response.error);
-    }
-    const payload = response.data || {};
-    if (payload.code !== 0) {
-      return Timeless.Result.Err(
-        payload.msg || "三方下载器请求失败",
-        payload.code,
-        payload.data,
-      );
-    }
-    return Timeless.Result.Ok(payload.data || {});
-  },
-});
-
 export function ThirdPartyDownloaderModel(props = {}) {
   const storage = props.storage || window.localStorage;
   const saved = read_saved_settings(storage);
@@ -309,6 +291,7 @@ export function ThirdPartyDownloaderModel(props = {}) {
     select_kind$: new Timeless.vm.SelectCore({
       defaultValue: saved.kind,
       placeholder: "选择下载器",
+      position: "item-aligned",
       options: THIRD_PARTY_DOWNLOADER_OPTIONS.map(
         (option) =>
           new Timeless.vm.SelectItemCore({
@@ -446,7 +429,7 @@ export function ThirdPartyDownloaderModel(props = {}) {
 
   const probe_request = new Timeless.kit.RequestCore(
     (body) =>
-      third_party_downloader_request.post(
+      window.request.post(
         "/api/v1/third_party_downloader/probe",
         body,
       ),
@@ -454,7 +437,7 @@ export function ThirdPartyDownloaderModel(props = {}) {
   );
   const create_request = new Timeless.kit.RequestCore(
     (body) =>
-      third_party_downloader_request.post(
+      window.request.post(
         "/api/v1/third_party_downloader/create",
         body,
       ),
@@ -462,7 +445,7 @@ export function ThirdPartyDownloaderModel(props = {}) {
   );
   const status_request = new Timeless.kit.RequestCore(
     (body) =>
-      third_party_downloader_request.post(
+      window.request.post(
         "/api/v1/third_party_downloader/status",
         body,
       ),
@@ -474,7 +457,7 @@ export function ThirdPartyDownloaderModel(props = {}) {
         filepath: String(body.file_path || ""),
         key: String(body.decode_key || ""),
       });
-      return third_party_downloader_request.post(
+      return window.request.post(
         `/api/channels/decrypt?${query.toString()}`,
         {},
       );

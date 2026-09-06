@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"wx_channel/frontend"
+	"wx_channel/internal/config"
 )
 
 func (c *APIClient) SetupRoutes() {
@@ -44,6 +45,8 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.POST("/api/show_file", c.handle_show_file)
 	c.engine.GET("/api/file", c.handle_fetch_file)
 	c.engine.POST("/api/v1/fs/list", c.handle_list_files)
+	c.engine.GET("/api/v1/download_task/live/:task_id/:resource_id/:asset_name", c.handle_stream_playback_asset)
+	c.engine.HEAD("/api/v1/download_task/live/:task_id/:resource_id/:asset_name", c.handle_stream_playback_asset)
 	// Media proxies
 	c.engine.GET("/imgproxy", c.handle_img_proxy)
 
@@ -79,6 +82,13 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.POST("/api/v1/third_party_downloader/probe", c.handle_probe_third_party_downloader)
 	c.engine.POST("/api/v1/third_party_downloader/create", c.handle_create_third_party_download)
 	c.engine.POST("/api/v1/third_party_downloader/status", c.handle_third_party_download_status)
+	c.engine.GET("/api/bridge/status", c.handle_bridge_status)
+	c.engine.GET("/api/bridge/tasks", c.handle_bridge_task_list)
+	c.engine.POST("/api/bridge/call", c.handle_bridge_call_submit)
+	c.engine.POST("/api/bridge/tasks", c.handle_bridge_call_submit)
+	c.engine.GET("/api/bridge/tasks/:id", c.handle_bridge_task_get)
+	c.engine.POST("/api/bridge/tasks/wxchannels", c.handle_bridge_wxchannels_submit)
+	c.engine.POST("/api/bridge/tasks/download", c.handle_bridge_download_submit)
 	// c.engine.GET("/api/influencers", c.handle_influencer_list)
 	// c.engine.GET("/api/influencers/:id", c.handle_influencer_get)
 	// c.engine.POST("/api/influencers", c.handle_influencer_create)
@@ -94,6 +104,7 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.GET("/api/content/relations", c.handle_content_relations)
 	// Other endpoints
 	c.engine.GET("/api/logs", c.handle_logs)
+	c.engine.POST("/api/logs/clear", c.handle_clear_logs)
 	c.engine.POST("/report", c.handle_frontend_report)
 	c.engine.GET("/api/status", c.handle_status)
 	c.engine.GET("/api/config", c.handle_application_config_get)
@@ -124,7 +135,6 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.POST("/api/proxy/certificate/replace", c.handle_proxy_certificate_replace)
 	c.engine.POST("/api/proxy/certificate/uninstall", c.handle_proxy_certificate_uninstall)
 	c.engine.POST("/api/proxy/certificate/uninstall_by_name", c.handle_proxy_certificate_uninstall_by_name)
-	c.engine.GET("/api/cookies/extract", c.handle_cookie_extract)
 	c.engine.POST("/api/cookies/update", c.handle_cookie_update)
 
 	c.engine.NoRoute(func(ctx *gin.Context) {
@@ -171,6 +181,7 @@ func (c *APIClient) handle_status(ctx *gin.Context) {
 		proxy_addr = fmt.Sprintf("%s:%d", host, port)
 	}
 	api_addr := fmt.Sprintf("%s:%d", api_host, api_port)
+	api_client_addr := config.APIClientHost(api_host, api_port)
 	statuses := gin.H{}
 	for name, status := range c.service_statuses_map() {
 		statuses[name] = status
@@ -180,7 +191,7 @@ func (c *APIClient) handle_status(ctx *gin.Context) {
 		"server_statuses": statuses,
 		"api": gin.H{
 			"addr":      api_addr,
-			"listening": check_port(api_addr),
+			"listening": check_port(api_client_addr),
 			"status":    statuses["api"],
 		},
 		"proxy": gin.H{

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -238,6 +239,32 @@ func resolve_path_value(value interface{}, base_dir string, cwd string, fallback
 		path = filepath.Join(base_dir, path)
 	}
 	return path
+}
+
+// APIClientHostname returns the hostname that local API clients should use.
+// An unspecified address is valid for listening, but it is not a destination
+// address, so clients must connect through the loopback interface instead.
+func APIClientHostname(bind_hostname string) string {
+	hostname := strings.Trim(strings.TrimSpace(bind_hostname), "[]")
+	parsed_ip := net.ParseIP(hostname)
+	if hostname == "" || (parsed_ip != nil && parsed_ip.IsUnspecified()) {
+		return "127.0.0.1"
+	}
+	return hostname
+}
+
+// APIClientHost returns the host and port that local API clients should use.
+func APIClientHost(bind_hostname string, port int) string {
+	return net.JoinHostPort(APIClientHostname(bind_hostname), strconv.Itoa(port))
+}
+
+// APIClientOrigin returns the HTTP origin that local API clients should use.
+func APIClientOrigin(protocol string, bind_hostname string, port int) string {
+	protocol = strings.TrimSuffix(strings.TrimSpace(protocol), ":")
+	if protocol == "" {
+		protocol = "http"
+	}
+	return protocol + "://" + APIClientHost(bind_hostname, port)
 }
 
 func (c *Config) LoadConfig() error {
@@ -541,8 +568,8 @@ func (c *Config) LoadConfig() error {
 		Key:         "api.hostname",
 		Type:        ConfigTypeString,
 		Default:     "127.0.0.1",
-		Description: "指定 API 服务的主机名",
-		Title:       "API 服务主机",
+		Description: "指定 API 服务的监听地址；0.0.0.0 表示监听所有 IPv4 接口，本机客户端仍通过 127.0.0.1 连接",
+		Title:       "API 监听地址",
 		Group:       "API",
 	})
 	Register(ConfigField{
@@ -552,6 +579,22 @@ func (c *Config) LoadConfig() error {
 		Description: "指定 API 服务的端口",
 		Title:       "API 服务端口",
 		Group:       "API",
+	})
+	Register(ConfigField{
+		Key:         "mcp.enabled",
+		Type:        ConfigTypeBool,
+		Default:     false,
+		Description: "是否在应用启动时初始化并启用 MCP 服务；关闭时仍可通过 API 按需启用",
+		Title:       "启动 MCP 服务",
+		Group:       "MCP",
+	})
+	Register(ConfigField{
+		Key:         "scraper.retainedJobs",
+		Type:        ConfigTypeInt,
+		Default:     20,
+		Description: "内存中保留的已完成、失败或中断抓取任务数量",
+		Title:       "抓取任务保留数量",
+		Group:       "Scraper",
 	})
 	Register(ConfigField{
 		Key:         "cookie.uuid",
@@ -645,6 +688,97 @@ func (c *Config) LoadConfig() error {
 		Group:       "Cloudflare",
 		HotReload:   true,
 	})
+	Register(ConfigField{
+		Key:         "bridge.deploy.workerName",
+		Type:        ConfigTypeString,
+		Default:     "dm-bridge",
+		Description: "部署 Durable Objects Bridge 桥接/转发服务时使用的 Cloudflare Worker 名称",
+		Title:       "Bridge Worker 名称",
+		Group:       "Bridge",
+	})
+	Register(ConfigField{
+		Key:         "bridge.deploy.pagesProjectName",
+		Type:        ConfigTypeString,
+		Default:     "",
+		Description: "Bridge 管理页面的 Cloudflare Pages 项目名；留空时使用 <workerName>-admin",
+		Title:       "Bridge Pages 项目名",
+		Group:       "Bridge",
+	})
+	Register(ConfigField{
+		Key:         "bridge.deploy.token",
+		Type:        ConfigTypeString,
+		Default:     "",
+		Description: "部署为 BRIDGE_TOKEN secret 的设备连接凭证；不要分发给外部调用者",
+		Title:       "Bridge 设备 Secret",
+		Group:       "Bridge",
+		Sensitive:   true,
+	})
+	Register(ConfigField{
+		Key:         "bridge.deploy.adminToken",
+		Type:        ConfigTypeString,
+		Default:     "",
+		Description: "保护 Bridge 管理页面和调用 Token 管理 API 的独立管理员密码，不能与设备 Secret 相同",
+		Title:       "Bridge 管理员 Token",
+		Group:       "Bridge",
+		Sensitive:   true,
+	})
+	Register(ConfigField{
+		Key:         "bridge.enabled",
+		Type:        ConfigTypeBool,
+		Default:     false,
+		Description: "是否将当前操作系统设备连接到个人 Bridge 桥接/转发服务",
+		Title:       "启用 Bridge 设备连接",
+		Group:       "Bridge",
+	})
+	Register(ConfigField{
+		Key:         "bridge.url",
+		Type:        ConfigTypeString,
+		Default:     "",
+		Description: "个人 Bridge 桥接/转发 Worker 的 HTTPS 地址",
+		Title:       "Bridge 地址",
+		Group:       "Bridge",
+	})
+	Register(ConfigField{
+		Key:         "bridge.deviceId",
+		Type:        ConfigTypeString,
+		Default:     "",
+		Description: "当前操作系统实例的稳定唯一标识；留空时使用系统主机名",
+		Title:       "设备 ID",
+		Group:       "Bridge",
+	})
+	Register(ConfigField{
+		Key:         "bridge.deviceName",
+		Type:        ConfigTypeString,
+		Default:     "",
+		Description: "管理页中显示的设备名称；留空时使用系统主机名",
+		Title:       "设备名称",
+		Group:       "Bridge",
+	})
+	Register(ConfigField{
+		Key:         "bridge.token",
+		Type:        ConfigTypeString,
+		Default:     "",
+		Description: "设备连接个人 Bridge 使用的 Secret；必须与 Bridge 部署的 BRIDGE_TOKEN 一致",
+		Title:       "Bridge 设备 Secret",
+		Group:       "Bridge",
+		Sensitive:   true,
+	})
+	Register(ConfigField{
+		Key:         "bridge.httpTimeoutSeconds",
+		Type:        ConfigTypeInt,
+		Default:     30,
+		Description: "设备调用 Bridge HTTP API 的超时时间（秒）",
+		Title:       "Bridge 请求超时",
+		Group:       "Bridge",
+	})
+	Register(ConfigField{
+		Key:         "bridge.methods",
+		Type:        ConfigTypeString,
+		Default:     "auto",
+		Description: "当前设备开放的方法；auto 自动发布全部已注册方法，none 不执行远程调用，也可填写逗号分隔的方法名",
+		Title:       "Bridge 方法白名单",
+		Group:       "Bridge",
+	})
 	// Update auto-update configuration
 	Register(ConfigField{
 		Key:         "update.proxy",
@@ -696,7 +830,7 @@ func (c *Config) LoadConfig() error {
 
 	if c.Existing {
 		// config.FilePath = config_filepath
-		if err := viper.ReadInConfig(); err != nil {
+		if err := read_config_file(c.FullPath); err != nil {
 			var nf viper.ConfigFileNotFoundError
 			if !(errors.As(err, &nf) || errors.Is(err, os.ErrNotExist)) {
 				c.Error = err
@@ -1095,13 +1229,6 @@ func config_value_float64(value interface{}) float64 {
 	default:
 		return 0
 	}
-}
-
-func IsMPEnabled() bool {
-	if viper.IsSet("mp.enabled") {
-		return viper.GetBool("mp.enabled")
-	}
-	return !viper.GetBool("mp.disabled")
 }
 
 func EnsureDirIfMissing(path string) error {

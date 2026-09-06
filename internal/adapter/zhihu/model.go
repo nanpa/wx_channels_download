@@ -642,6 +642,34 @@ func (h *handler) BuildDownloadTask(content_json json.RawMessage, config_raw jso
 	if err != nil {
 		return nil, fmt.Errorf("转换知乎内容详情失败: %w", err)
 	}
+	video_infos, video_err := fetch_zhihu_embedded_video_infos(h.scraper_client(), page_data, content)
+	if video_err != nil {
+		// Embedded media is an optional download enhancement. A stale or
+		// login-bound video ticket must not discard an otherwise complete SSR
+		// article/answer, so keep the HTML task and omit unavailable videos.
+		h.runtime_mu.RLock()
+		logger := h.logger
+		h.runtime_mu.RUnlock()
+		if logger != nil {
+			logger.Warn().
+				Err(video_err).
+				Str("content_id", content.ExternalId).
+				Msg("zhihu: skip unavailable embedded video")
+		}
+		video_infos = nil
+	}
+	video_resources, video_details := build_zhihu_embedded_videos(
+		content,
+		account,
+		video_infos,
+		resource_key,
+		config_string(config, "video_variant_key"),
+		first_non_empty_str(
+			config_string(config, "video_variant_spec"),
+			config_string(config, "spec"),
+		),
+	)
+	content_details = append(content_details, video_details...)
 	var content_detail any
 	if len(content_details) > 0 {
 		content_detail = content_details[0].Data
@@ -681,6 +709,7 @@ func (h *handler) BuildDownloadTask(content_json json.RawMessage, config_raw jso
 		},
 	}
 	resources = append(resources, parse_content_images(page_data, content_id, resource_key, source_url)...)
+	resources = append(resources, video_resources...)
 
 	// Cover image resource
 	if cover_url != "" {
@@ -747,6 +776,17 @@ func build_config_json(config map[string]any) map[string]any {
 		m[key] = value
 	}
 	return m
+}
+
+func config_string(config map[string]any, key string) string {
+	value, ok := config[key]
+	if !ok || value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 // BuildBrowseRecordFromObject converts a zhihu.AnswerPage into a

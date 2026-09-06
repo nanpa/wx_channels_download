@@ -1,9 +1,5 @@
 const Timeless = window.Timeless;
 
-if (!Timeless) {
-  throw new Error("应用无法启动：Timeless 运行时未加载");
-}
-
 const UPDATE_POLL_INTERVAL = 250;
 const RESTART_POLL_INTERVAL = 600;
 const RESTART_TIMEOUT = 60000;
@@ -37,20 +33,6 @@ function format_bytes(value) {
     unit_index += 1;
   }
   return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${units[unit_index]}`;
-}
-
-function format_published_at(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
 }
 
 function update_error_message(error, fallback) {
@@ -93,10 +75,7 @@ function createUpdateModel(options = {}) {
   const busy_ = computed(status_, (status) =>
     ["downloading", "ready", "restarting"].includes(status),
   );
-  const downloading_ = computed(
-    status_,
-    (status) => status === "downloading",
-  );
+  const downloading_ = computed(status_, (status) => status === "downloading");
   const can_download_ = computed(snapshot_, (snapshot) => {
     return (
       Boolean(snapshot.available) &&
@@ -110,16 +89,17 @@ function createUpdateModel(options = {}) {
     snapshot_,
     (snapshot) => number_or_zero(snapshot.total_size) > 0,
   );
-  const has_latest_version_ = computed(
-    snapshot_,
-    (snapshot) => Boolean(snapshot.latest_version || snapshot.name),
+  const has_latest_version_ = computed(snapshot_, (snapshot) =>
+    Boolean(snapshot.latest_version || snapshot.name),
   );
-  const notice_visible_ = computed(
-    snapshot_,
-    (snapshot) => Boolean(snapshot.available),
+  const notice_visible_ = computed(snapshot_, (snapshot) =>
+    Boolean(snapshot.available),
   );
   const published_text_ = computed(snapshot_, (snapshot) =>
-    format_published_at(snapshot.published_at),
+    window.format_time(
+      snapshot.published_at,
+      String(snapshot.published_at || ""),
+    ),
   );
   const progress_text_ = computed(snapshot_, (snapshot) => {
     const downloaded = format_bytes(snapshot.downloaded);
@@ -149,7 +129,7 @@ function createUpdateModel(options = {}) {
       case "downloading":
         return "更新包下载完成后将自动替换程序并重启服务。";
       case "ready":
-        return "更新已安装，正在准备重启。";
+        return "更新包已准备完成，正在重启并安装。";
       case "restarting":
         return "服务恢复后页面会自动刷新，请勿关闭此页面。";
       case "error":
@@ -220,7 +200,11 @@ function createUpdateModel(options = {}) {
     }
   }
 
-  async function request(path, request_options = {}, timeout = REQUEST_TIMEOUT) {
+  async function request(
+    path,
+    request_options = {},
+    timeout = REQUEST_TIMEOUT,
+  ) {
     const controller = new AbortController();
     controllers.add(controller);
     const timeout_id = window.setTimeout(() => controller.abort(), timeout);
@@ -382,8 +366,12 @@ function createUpdateModel(options = {}) {
     clear_poll_timer();
     controllers.forEach((controller) => controller.abort());
     controllers.clear();
-    ui_state_unlistens.forEach((unlisten) => unlisten?.());
-    Object.values(ui).forEach((store) => store.destroy?.());
+    ui_state_unlistens.forEach((unlisten) => {
+      if (typeof unlisten === "function") unlisten();
+    });
+    Object.values(ui).forEach((store) => {
+      if (typeof store.destroy === "function") store.destroy();
+    });
   }
 
   return {
@@ -416,24 +404,6 @@ function createUpdateModel(options = {}) {
   };
 }
 
-const settings_request = Timeless.kit.request_factory({
-  headers: { "Content-Type": "application/json" },
-  process(response) {
-    if (response.error) {
-      return Timeless.Result.Err(response.error);
-    }
-    const payload = response.data || {};
-    if (payload.code !== 0) {
-      return Timeless.Result.Err(
-        payload.msg || "请求失败",
-        payload.code,
-        payload.data,
-      );
-    }
-    return Timeless.Result.Ok(payload.data || {});
-  },
-});
-
 function create_mcp_settings_model(client) {
   const data_ = Timeless.ref(null);
   const loading_ = Timeless.ref(false);
@@ -448,13 +418,13 @@ function create_mcp_settings_model(client) {
   let request_sequence = 0;
   const status_request = new Timeless.kit.RequestCore(
     function () {
-      return settings_request.get("/api/mcp/status");
+      return window.request.get("/api/mcp/status");
     },
     { client },
   );
   const update_request = new Timeless.kit.RequestCore(
     function (enabled) {
-      return settings_request.post(
+      return window.request.post(
         enabled ? "/api/mcp/enable" : "/api/mcp/disable",
       );
     },
@@ -543,15 +513,15 @@ function create_mcp_settings_model(client) {
 
   function destroy() {
     request_sequence += 1;
-    status_request.destroy?.();
-    update_request.destroy?.();
+    if (typeof status_request.destroy === "function") status_request.destroy();
+    if (typeof update_request.destroy === "function") update_request.destroy();
     state_unlistens.forEach(function (unlisten) {
       if (typeof unlisten === "function") {
         unlisten();
       }
     });
     Object.values(ui).forEach(function (store) {
-      store.destroy?.();
+      if (typeof store.destroy === "function") store.destroy();
     });
   }
 
@@ -578,13 +548,14 @@ export function ShellViewModel(props) {
   const menu_configs = [
     { title: "下载", name: "root.shell.download", icon: "download" },
     { title: "Get", name: "root.shell.scraper", icon: "search" },
-    { title: "内容管理", name: "root.shell.content", icon: "library" },
+    { title: "内容", name: "root.shell.content", icon: "library" },
     {
-      title: "浏览记录",
+      title: "浏览",
       name: "root.shell.browsehistory",
       icon: "history",
     },
-    { title: "帐号管理", name: "root.shell.account", icon: "user" },
+    { title: "账号", name: "root.shell.account", icon: "user" },
+    // { title: "日志", name: "root.shell.logs", icon: "user" },
   ];
   const menu$ = Timeless.kit.RouteMenusModel({
     view: props.view,
@@ -593,9 +564,7 @@ export function ShellViewModel(props) {
   });
   const settings_section_ = Timeless.ref("certificate");
   const update$ = createUpdateModel({
-    currentVersion: String(
-      (window.__d_config && window.__d_config.version) || "",
-    ).trim(),
+    currentVersion: String(window.config.version || "").trim(),
   });
   const mcp_settings$ = create_mcp_settings_model(props.client);
   const certificate_ = Timeless.ref(null);
@@ -603,15 +572,18 @@ export function ShellViewModel(props) {
   const certificate_error_ = Timeless.ref("");
   const certificate_request = new Timeless.kit.RequestCore(
     function () {
-      return settings_request.get("/api/proxy/certificate/status");
+      return window.request.get("/api/proxy/certificate/status");
+    },
+    { client: props.client },
+  );
+  const certificate_uninstall_request = new Timeless.kit.RequestCore(
+    function () {
+      return window.request.post("/api/proxy/certificate/uninstall");
     },
     { client: props.client },
   );
   let certificate_request_sequence = 0;
-  const version =
-    String(
-      (window.__d_config && window.__d_config.version) || "",
-    ).trim() || "开发版";
+  const version = String(window.config.version || "").trim() || "开发版";
 
   async function load_certificate() {
     const sequence = ++certificate_request_sequence;
@@ -627,6 +599,22 @@ export function ShellViewModel(props) {
       return result;
     }
     certificate_.as(result.data || {});
+    return result;
+  }
+
+  async function delete_certificate() {
+    if (!(certificate_.value && certificate_.value.installed)) {
+      return null;
+    }
+    certificate_error_.as("");
+    ui.delete_certificate_button$.setLoading(true);
+    const result = await certificate_uninstall_request.run();
+    if (result.error) {
+      certificate_error_.as(result.error.message || String(result.error));
+    } else {
+      certificate_.as((result.data && result.data.certificate) || {});
+    }
+    ui.delete_certificate_button$.setLoading(false);
     return result;
   }
 
@@ -682,6 +670,12 @@ export function ShellViewModel(props) {
       loading: certificate_loading_.value,
       onClick: load_certificate,
     }),
+    delete_certificate_button$: new Timeless.vm.ButtonCore({
+      variant: "destructive",
+      size: "sm",
+      disabled: true,
+      onClick: delete_certificate,
+    }),
   };
   const menu_items = menu_configs.map(function (menu) {
     return {
@@ -694,12 +688,23 @@ export function ShellViewModel(props) {
       }),
     };
   });
-  const certificate_loading_unlisten = certificate_loading_.subscribe({
-    onChange(value) {
-      ui.refresh_certificate_button$.setLoading(Boolean(value));
-      ui.retry_certificate_button$.setLoading(Boolean(value));
-    },
-  });
+  const certificate_unlistens = [
+    certificate_loading_.subscribe({
+      onChange(value) {
+        ui.refresh_certificate_button$.setLoading(Boolean(value));
+        ui.retry_certificate_button$.setLoading(Boolean(value));
+      },
+    }),
+    certificate_.subscribe({
+      onChange(value) {
+        if (value && value.installed) {
+          ui.delete_certificate_button$.enable();
+        } else {
+          ui.delete_certificate_button$.disable();
+        }
+      },
+    }),
+  ];
 
   function ready() {
     return update$.methods.check();
@@ -707,15 +712,20 @@ export function ShellViewModel(props) {
 
   function destroy() {
     certificate_request_sequence += 1;
-    certificate_request.destroy?.();
-    if (typeof certificate_loading_unlisten === "function") {
-      certificate_loading_unlisten();
+    if (typeof certificate_request.destroy === "function") {
+      certificate_request.destroy();
     }
+    if (typeof certificate_uninstall_request.destroy === "function") {
+      certificate_uninstall_request.destroy();
+    }
+    certificate_unlistens.forEach(function (unlisten) {
+      if (typeof unlisten === "function") unlisten();
+    });
     menu_items.forEach(function (item) {
-      item.button$.destroy?.();
+      if (typeof item.button$.destroy === "function") item.button$.destroy();
     });
     Object.values(ui).forEach(function (store) {
-      store.destroy?.();
+      if (typeof store.destroy === "function") store.destroy();
     });
     mcp_settings$.methods.destroy();
     update$.methods.destroy();

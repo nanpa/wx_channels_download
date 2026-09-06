@@ -13,11 +13,24 @@ func (d *HermesEngine) pause_task(task_id int) {
 	d.delete_tracker(task_id)
 }
 
-func (d *HermesEngine) fail_task(task_id int, err_msg string) {
+func (d *HermesEngine) fail_task(job *TaskJob, err_msg string) {
+	if job == nil {
+		return
+	}
+	task_id := job.ID
 	_ = d.store.UpdateStatus(task_id, TaskStatusFailed)
 	_ = d.store.DeactivateConnections(task_id)
 	_ = d.store.RecordError(task_id, err_msg)
 	d.logger.Error().Int("task_id", task_id).Str("error", err_msg).Msg("task failed")
+	if d.hooks != nil && (d.hooks.HasFailedHook() || d.hooks.HasFinishHook()) {
+		file_paths := make([]string, 0, len(job.Resources))
+		for _, resource := range job.Resources {
+			if resource.FilePath != "" {
+				file_paths = append(file_paths, resource.FilePath)
+			}
+		}
+		go d.invoke_terminal_hooks(job, hook_task_status_failed, err_msg, file_paths)
+	}
 	d.emit(EventFailed, TaskFailedEventData{TaskID: task_id, Error: err_msg})
 	d.delete_tracker(task_id)
 }
@@ -39,14 +52,14 @@ func (d *HermesEngine) emit(event EventType, data EventData) {
 func (d *HermesEngine) emit_progress(task_id int) {
 	p := d.snapshot_progress(task_id)
 	if p == nil {
-		d.logger.Info().Int("task_id", task_id).Msg("progress: skip emit (no change)")
+		d.logger.Debug().Int("task_id", task_id).Msg("progress: skip emit (no change)")
 		return
 	}
 	msg := "progress: emit to handler"
 	if p.Keepalive {
 		msg = "progress: emit keepalive"
 	}
-	d.logger.Info().
+	d.logger.Debug().
 		Int("task_id", task_id).
 		Int64("downloaded", p.Downloaded).
 		Int64("total_size", p.TotalSize).
@@ -79,28 +92,41 @@ func (d *HermesEngine) snapshot_progress(task_id int) *TaskProgress {
 }
 
 func (d *HermesEngine) current_progress(task_id int, mark_emit bool) *TaskProgress {
-	d.progress_mu.Lock()
-	tracker, ok := d.progress_cache[task_id]
-	d.progress_mu.Unlock()
+	tracker, ok := d.get_progress_tracker(task_id)
 	if !ok {
 		return nil
 	}
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
-	var total_downloaded int64
-	var total_speed int64
+	// Skip emission if downloaded and speed haven't changed since last broadcast.
+	// This prevents duplicate WS pushes when the progress emit interval (180ms) is
+	// shorter than the segment progress reporting interval.
+	// However, if >500ms has passed since the last real emission, emit anyway so
+	// the frontend knows the download is still alive (e.g. during segment
+	// connection establishment which can take 1-5 seconds).
+	is_keepalive := false
+	if mark_emit {
+		if tracker.total_downloaded == tracker.last_emit_downloaded && tracker.total_speed == tracker.last_emit_speed && tracker.total_downloaded != tracker.total_size {
+			if time.Since(tracker.last_emit_time) < 500*time.Millisecond {
+				return nil
+			}
+			is_keepalive = true
+		}
+		tracker.last_emit_downloaded = tracker.total_downloaded
+		tracker.last_emit_speed = tracker.total_speed
+		tracker.last_emit_time = time.Now()
+	}
 	p := &TaskProgress{
-		Resources: make([]ResourceProgress, 0, len(tracker.resources)),
+		TotalSize:     tracker.total_size,
+		Downloaded:    tracker.total_downloaded,
+		Speed:         tracker.total_speed,
+		ResourceCount: len(tracker.order),
+		Resources:     make([]ResourceProgress, 0, len(tracker.resources)),
+		Keepalive:     is_keepalive,
 	}
 	for _, r_id := range tracker.order {
 		r := tracker.resources[r_id]
-		p.TotalSize += r.size
-		p.Downloaded += r.downloaded
-		p.Speed += r.speed
-		total_downloaded += r.downloaded
-		total_speed += r.speed
-		p.ResourceCount++
 		p.Resources = append(p.Resources, ResourceProgress{
 			ID:         r_id,
 			Name:       r.name,
@@ -110,25 +136,6 @@ func (d *HermesEngine) current_progress(task_id int, mark_emit bool) *TaskProgre
 			Downloaded: r.downloaded,
 			Speed:      r.speed,
 		})
-	}
-	// Skip emission if downloaded and speed haven't changed since last broadcast.
-	// This prevents duplicate WS pushes when the progress emit interval (180ms) is
-	// shorter than the segment progress reporting interval.
-	// However, if >500ms has passed since the last real emission, emit anyway so
-	// the frontend knows the download is still alive (e.g. during segment
-	// connection establishment which can take 1-5 seconds).
-	if mark_emit {
-		is_keepalive := false
-		if total_downloaded == tracker.last_emit_downloaded && total_speed == tracker.last_emit_speed && total_downloaded != p.TotalSize {
-			if time.Since(tracker.last_emit_time) < 500*time.Millisecond {
-				return nil
-			}
-			is_keepalive = true
-		}
-		p.Keepalive = is_keepalive
-		tracker.last_emit_downloaded = total_downloaded
-		tracker.last_emit_speed = total_speed
-		tracker.last_emit_time = time.Now()
 	}
 	return p
 }
@@ -141,6 +148,7 @@ func (d *HermesEngine) init_tracker(task_id int, resource_sizes map[int]int64, r
 	}
 	for _, r := range resources {
 		sz := resource_sizes[r.ID]
+		tracker.total_size += sz
 		tracker.resources[r.ID] = &resource_tracker{
 			size: sz,
 			name: r.Name,
@@ -157,14 +165,14 @@ func (d *HermesEngine) init_tracker(task_id int, resource_sizes map[int]int64, r
 // updateTracker updates a resource's downloaded bytes and speed in the in-memory tracker.
 // speed comes from the download loop (copyReader/downloadSegment) computed at progressInterval.
 func (d *HermesEngine) update_tracker(task_id, resource_id int, downloaded, speed int64) {
-	d.progress_mu.Lock()
-	tracker, ok := d.progress_cache[task_id]
-	d.progress_mu.Unlock()
+	tracker, ok := d.get_progress_tracker(task_id)
 	if !ok {
 		return
 	}
 	tracker.mu.Lock()
 	if r, ok := tracker.resources[resource_id]; ok {
+		tracker.total_downloaded += downloaded - r.downloaded
+		tracker.total_speed += speed - r.speed
 		r.downloaded = downloaded
 		r.speed = speed
 	}
@@ -175,17 +183,23 @@ func (d *HermesEngine) update_tracker(task_id, resource_id int, downloaded, spee
 // Called when Prepare discovers the actual file size during download, ensuring
 // the WebSocket progress push reflects accurate size even for single-resource tasks.
 func (d *HermesEngine) update_tracker_size(task_id, resource_id int, size int64) {
-	d.progress_mu.Lock()
-	tracker, ok := d.progress_cache[task_id]
-	d.progress_mu.Unlock()
+	tracker, ok := d.get_progress_tracker(task_id)
 	if !ok {
 		return
 	}
 	tracker.mu.Lock()
 	if r, ok := tracker.resources[resource_id]; ok {
+		tracker.total_size += size - r.size
 		r.size = size
 	}
 	tracker.mu.Unlock()
+}
+
+func (d *HermesEngine) get_progress_tracker(task_id int) (*progress_tracker, bool) {
+	d.progress_mu.RLock()
+	tracker, ok := d.progress_cache[task_id]
+	d.progress_mu.RUnlock()
+	return tracker, ok
 }
 
 // deleteTracker removes the progress tracker for a finished/failed task.

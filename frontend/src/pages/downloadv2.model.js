@@ -1,16 +1,5 @@
-const runtime_config = window.__d_config || {};
-
-const MaxRunning = Math.max(1, Number(runtime_config.maxRunning) || 3);
+const MaxRunning = Math.max(1, Number(window.config.maxRunning) || 3);
 const DOWNLOAD_PAGE_SIZE_DEFAULT = 12;
-
-const DOWNLOAD_STATUS_COUNT_ITEMS = [
-  { key: "total", label: "全部" },
-  { key: "running", label: "下载中" },
-  { key: "pause", label: "暂停" },
-  { key: "wait", label: "等待中" },
-  { key: "done", label: "已完成" },
-  { key: "error", label: "失败" },
-];
 
 const DOWNLOAD_SERVER_STATUS_FILTERS = {
   wait: "0,1",
@@ -28,8 +17,8 @@ function runtime_flag(value) {
 
 function is_download_open_external() {
   return (
-    runtime_flag(runtime_config.remoteServerEnabled) ||
-    runtime_flag(runtime_config.inDocker)
+    runtime_flag(window.config.remoteServerEnabled) ||
+    runtime_flag(window.config.inDocker)
   );
 }
 
@@ -90,8 +79,8 @@ function format_download_size(bytes) {
   return `${(value / Math.pow(1024, exponent)).toFixed(1)}${units[exponent]}`;
 }
 
-function format_download_percent(task) {
-  const progress = task && task.progress;
+function format_download_percent(record) {
+  const progress = record && record.progress;
   const direct = Number(progress);
   if (Number.isFinite(direct)) {
     return Math.min(100, Math.max(0, Math.round(direct * 100) / 100));
@@ -101,18 +90,17 @@ function format_download_percent(task) {
   if (Number.isFinite(detail_percent)) {
     return Math.min(100, Math.max(0, Math.round(detail_percent * 100) / 100));
   }
-  const total = Number((task && task.size) || detail.total || detail.size || 0);
-  const downloaded = Number((task && task.downloaded) || detail.downloaded || 0);
+  const total = Number(
+    (record && record.size) || detail.total || detail.size || 0,
+  );
+  const downloaded = Number(
+    (record && record.downloaded) || detail.downloaded || 0,
+  );
   if (total <= 0) return 0;
   return Math.min(
     100,
     Math.max(0, Math.round(((downloaded * 100) / total) * 100) / 100),
   );
-}
-
-function get_download_status_count(counts, item) {
-  if (!counts || !item) return 0;
-  return Number(counts[item.key]) || 0;
 }
 
 function empty_status_counts() {
@@ -161,7 +149,7 @@ function normalize_server_status_counts(source) {
 
 function task_identifier(value) {
   if (!value || typeof value !== "object") return value;
-  if (value.__domain && value.__domain.id) return value.__domain.id.value;
+  if (value.state && value.state.id) return value.state.id.value;
   if (value.id && typeof value.id === "object" && "value" in value.id) {
     return value.id.value;
   }
@@ -188,7 +176,9 @@ function DownloadV2Model(props = {}) {
   const running_count_ = ref(0);
   const status_counts_ = refobj(empty_status_counts());
   const active_status_ = ref("total");
+  const initial_ = ref(true);
   const loading_ = ref(false);
+  const error_ = ref("");
   const list_render_enabled_ = ref(true);
   const selected_task_ids_ = refarr([]);
   const delete_task_ = ref(null);
@@ -211,7 +201,6 @@ function DownloadV2Model(props = {}) {
   const overwrite_apply_all_ = ref(false);
   const overwrite_processing_ = ref(false);
   const overwrite_conflict_ = refobj({ index: 0, total: 0, name: "" });
-  const task_entries = new Map();
   const disposables = [];
   let list_view_element = null;
   let selection_anchor_task_id = null;
@@ -250,6 +239,52 @@ function DownloadV2Model(props = {}) {
       }
       const start = (state.page - 1) * state.pageSize + 1;
       return `第 ${start}-${start + state.count - 1} 条，共 ${state.total} 条`;
+    },
+  );
+  const loaded_task_selection_ = combine(
+    {
+      tasks: tasks_,
+      selected_ids: selected_task_ids_,
+    },
+    (data) => {
+      const task_ids = [];
+      (data.tasks || []).forEach((task) => {
+        const id = task_identifier(task);
+        if (
+          !task ||
+          task.__placeholder ||
+          id === undefined ||
+          id === null ||
+          id === ""
+        ) {
+          return;
+        }
+        if (!task_ids.some((task_id) => task_id === id)) {
+          task_ids.push(id);
+        }
+      });
+      const selected_ids = data.selected_ids || [];
+      const selected = task_ids.filter((id) => {
+        return selected_ids.some((selected_id) => selected_id === id);
+      }).length;
+      return {
+        total: task_ids.length,
+        selected,
+        checked: task_ids.length > 0 && selected === task_ids.length,
+        indeterminate: selected > 0 && selected < task_ids.length,
+      };
+    },
+  );
+  const list_status_ = combine(
+    {
+      initial: initial_,
+      error: error_,
+      tasks: tasks_,
+    },
+    (state) => {
+      if (state.initial) return "initial";
+      if (state.error) return "error";
+      return state.tasks.length > 0 ? "normal" : "empty";
     },
   );
 
@@ -363,6 +398,7 @@ function DownloadV2Model(props = {}) {
     taskPreviewDrawer$: new Timeless.vm.DialogCore({
       title: "任务详情",
       closeable: true,
+      footer: false,
     }),
     deleteConfirmDialog$: new Timeless.vm.DialogCore({
       onOk() {
@@ -417,39 +453,6 @@ function DownloadV2Model(props = {}) {
     create_platform_filename_,
   );
 
-  function domain_task_record(task$) {
-    const raw = (task$ && task$.raw && task$.raw.value) || {};
-    const progress = (task$ && task$.progress && task$.progress.value) || {};
-    const error = task$ && task$.error ? task$.error.value : null;
-    const resources = raw.files || raw.resources || [];
-    return {
-      ...raw,
-      id: task$ && task$.id ? task$.id.value : raw.id,
-      name:
-        (task$ && task$.name && task$.name.value) ||
-        raw.name ||
-        raw.title ||
-        "未命名任务",
-      title:
-        (task$ && task$.title && task$.title.value) ||
-        raw.title ||
-        raw.name ||
-        "未命名任务",
-      status: (task$ && task$.status && task$.status.value) || raw.status,
-      filepath:
-        (task$ && task$.filepath && task$.filepath.value) || raw.filepath || "",
-      path: raw.path || raw.download_dir || "",
-      filename: raw.filename || raw.name || "",
-      progress: Number(progress.percent) || 0,
-      downloaded: Number(progress.downloaded) || 0,
-      size: Number(progress.total) || 0,
-      speed: Number(progress.speed) || 0,
-      files: Array.isArray(resources) ? resources : [],
-      error: error ? error.message || String(error) : raw.error || raw.error_message,
-      __domain: task$,
-    };
-  }
-
   function page_request_options(target_page) {
     const options = {
       all: false,
@@ -485,26 +488,21 @@ function DownloadV2Model(props = {}) {
 
   function rebuild_derived_state() {
     if (disposed) return;
-    const records = [];
-    task_entries.forEach((entry) => {
-      const record = entry.record;
-      const id = task_identifier(record);
-      if (id !== undefined && id !== null && id !== "") records.push(record);
-    });
-    const order = new Map();
-    (downloader.task_list.value || []).forEach((task$, index) => order.set(task$, index));
-    records.sort((left, right) => {
-      return (order.get(left.__domain) || 0) - (order.get(right.__domain) || 0);
+    const domain_tasks = (downloader.task_list.value || []).filter((task$) => {
+      const id = task_identifier(task$);
+      return id !== undefined && id !== null && id !== "";
     });
 
-    const valid_ids = records.map(task_identifier);
+    const valid_ids = domain_tasks.map(task_identifier);
     const selected_ids = (selected_task_ids_.value || []).filter((id) => {
       return valid_ids.some((valid_id) => valid_id === id);
     });
     if (selected_ids.length !== selected_task_ids_.value.length) {
       selected_task_ids_.as(selected_ids);
     }
-    tasks_.as(records);
+    // Keep DownloadTaskModel instances intact. Their `state.*` refs drive row
+    // updates without rebuilding plain records for every progress event.
+    tasks_.assign(domain_tasks);
   }
 
   async function load_page(target_page = page_.value) {
@@ -546,59 +544,30 @@ function DownloadV2Model(props = {}) {
       }
       sync_domain_tasks();
       apply_list_meta(meta);
+      error_.as("");
       return tasks_;
     } catch (error) {
       if (sequence === request_sequence) {
+        error_.as(
+          (error && error.message) || String(error || "获取下载任务失败"),
+        );
         report_error(error, "获取下载任务失败");
       }
       return null;
     } finally {
-      if (sequence === request_sequence) loading_.as(false);
+      if (sequence === request_sequence) {
+        loading_.as(false);
+        initial_.as(false);
+      }
     }
   }
 
-  function sync_domain_task(task$) {
-    const entry = task_entries.get(task$);
-    if (!entry) return;
-    entry.record = domain_task_record(task$);
-    rebuild_derived_state();
-  }
-
-  function release_domain_task(task$) {
-    const entry = task_entries.get(task$);
-    if (!entry) return;
-    entry.unlistens.forEach((unlisten) => {
-      if (typeof unlisten === "function") unlisten();
-    });
-    task_entries.delete(task$);
-  }
-
   function sync_domain_tasks() {
-    if (disposed) return;
-    const domain_tasks = downloader.task_list.value || [];
-    const current = new Set(domain_tasks);
-    task_entries.forEach((_entry, task$) => {
-      if (!current.has(task$)) release_domain_task(task$);
-    });
-    domain_tasks.forEach((task$) => {
-      if (task_entries.has(task$)) {
-        task_entries.get(task$).record = domain_task_record(task$);
-        return;
-      }
-      const entry = {
-        record: domain_task_record(task$),
-        unlistens: [],
-      };
-      if (typeof task$.onChange === "function") {
-        entry.unlistens.push(task$.onChange(() => sync_domain_task(task$)));
-      }
-      task_entries.set(task$, entry);
-    });
     rebuild_derived_state();
   }
 
   function domain_task(value) {
-    if (value && value.__domain) return value.__domain;
+    if (value && value.state && value.state.id) return value;
     return downloader.get(task_identifier(value));
   }
 
@@ -610,12 +579,16 @@ function DownloadV2Model(props = {}) {
 
   async function run_task_action(value, action, fallback, refresh_page = true) {
     const task$ = domain_task(value);
-    if (!task$ || typeof task$[action] !== "function") {
+    if (
+      !task$ ||
+      !task$.methods ||
+      typeof task$.methods[action] !== "function"
+    ) {
       report_error(null, "下载任务不存在");
       return null;
     }
     try {
-      const result = await task$[action]();
+      const result = await task$.methods[action]();
       if (refresh_page) await load_page(page_.value);
       return result;
     } catch (error) {
@@ -625,9 +598,11 @@ function DownloadV2Model(props = {}) {
   }
 
   function set_status_filter(status) {
-    const value = DOWNLOAD_STATUS_COUNT_ITEMS.some((item) => item.key === status)
-      ? status
-      : "total";
+    const value =
+      status === "total" ||
+      Object.prototype.hasOwnProperty.call(DOWNLOAD_SERVER_STATUS_FILTERS, status)
+        ? status
+        : "total";
     active_status_.as(value);
     page_.as(1);
     reset_list_scroll();
@@ -639,22 +614,28 @@ function DownloadV2Model(props = {}) {
     if (list_view_element) list_view_element.scrollTop = 0;
   }
 
-  function previous_page() {
-    if (page_.value <= 1 || loading_.value) return null;
-    const target_page = page_.value - 1;
+  function change_page(target_page) {
+    const page = Math.min(
+      page_count_.value,
+      Math.max(1, Number(target_page) || 1),
+    );
+    if (page === page_.value || loading_.value) return null;
     reset_list_scroll();
-    return load_page(target_page);
+    return load_page(page);
+  }
+
+  function previous_page() {
+    return change_page(page_.value - 1);
   }
 
   function next_page() {
-    if (page_.value >= page_count_.value || loading_.value) return null;
-    const target_page = page_.value + 1;
-    reset_list_scroll();
-    return load_page(target_page);
+    return change_page(page_.value + 1);
   }
 
   function refresh_tasks() {
-    return load_page(page_.value);
+    page_.as(1);
+    reset_list_scroll();
+    return load_page(1);
   }
 
   function start_task(task) {
@@ -747,7 +728,9 @@ function DownloadV2Model(props = {}) {
     try {
       for (const task$ of tasks) {
         try {
-          await task$.delete({ deleteFiles: delete_delete_files_.value });
+          await task$.methods.delete({
+            deleteFiles: delete_delete_files_.value,
+          });
         } catch (error) {
           errors.push(error);
         }
@@ -804,6 +787,18 @@ function DownloadV2Model(props = {}) {
       (selected_task_ids_.value || []).filter((id) => !visible_ids.has(id)),
     );
     selection_anchor_task_id = null;
+  }
+
+  function toggle_loaded_tasks_selected() {
+    set_loaded_tasks_selected(!loaded_task_selection_.value.checked);
+  }
+
+  function task_selection_state(task) {
+    const task_id = task_identifier(task);
+    return computed(selected_task_ids_, (ids) => ({
+      checked: (ids || []).some((selected_id) => selected_id === task_id),
+      indeterminate: false,
+    }));
   }
 
   function toggle_task_selected(task, options = {}) {
@@ -903,7 +898,8 @@ function DownloadV2Model(props = {}) {
   function normalize_platform_preview(preview, fallback) {
     if (!preview || typeof preview !== "object") return preview;
     if (Array.isArray(preview.resources)) return preview;
-    const task = preview.Task && typeof preview.Task === "object" ? preview.Task : {};
+    const task_record =
+      preview.Task && typeof preview.Task === "object" ? preview.Task : {};
     const source_resources = Array.isArray(preview.Resources) ? preview.Resources : [];
     const resources = source_resources.map((item, index) => {
       const resource = item && item.Resource ? item.Resource : item || {};
@@ -920,8 +916,12 @@ function DownloadV2Model(props = {}) {
     });
     return {
       platform:
-        task.platform_id || task.PlatformID || fallback.platform || "",
-      task_name: task.name || task.Name || fallback.filename || "",
+        task_record.platform_id ||
+        task_record.PlatformID ||
+        fallback.platform ||
+        "",
+      task_name:
+        task_record.name || task_record.Name || fallback.filename || "",
       download_dir: fallback.download_dir || "",
       resource_type: resources[0]
         ? resources[0].kind || resources[0].type || ""
@@ -1021,9 +1021,13 @@ function DownloadV2Model(props = {}) {
   }
 
   async function create_domain_task(object, success_message, options = {}) {
-    const task$ = downloader.create(object);
     try {
-      await task$.ready;
+      const task$ =
+        object &&
+        object.platform &&
+        Object.prototype.hasOwnProperty.call(object, "content")
+          ? await downloader.create(object.content, object)
+          : await downloader.create(object);
       await load_page(page_.value);
       if (options.hideDialog) options.hideDialog.hide();
       DLUtils.toast(success_message);
@@ -1147,6 +1151,7 @@ function DownloadV2Model(props = {}) {
 
   Object.assign(methods, {
     setStatusFilter: set_status_filter,
+    changePage: change_page,
     previousPage: previous_page,
     nextPage: next_page,
     refreshTasks: refresh_tasks,
@@ -1163,6 +1168,8 @@ function DownloadV2Model(props = {}) {
     requestClearTasks: request_clear_tasks,
     confirmClearTasks: confirm_clear_tasks,
     setLoadedTasksSelected: set_loaded_tasks_selected,
+    toggleLoadedTasksSelected: toggle_loaded_tasks_selected,
+    taskSelectionState: task_selection_state,
     toggleTaskSelected: toggle_task_selected,
     requestCreateTask: request_create_task,
     requestCreatePlatformTask: request_create_platform_task,
@@ -1200,6 +1207,7 @@ function DownloadV2Model(props = {}) {
     deleting_task: deleting_task_,
     selected_task_ids: selected_task_ids_,
     selected_task_count: selected_task_count_,
+    loaded_task_selection: loaded_task_selection_,
     clearing_tasks: clearing_tasks_,
     create_task_text: create_task_text_,
     create_task_filename: create_task_filename_,
@@ -1216,7 +1224,10 @@ function DownloadV2Model(props = {}) {
     websocket_connecting: downloader.websocket_connecting,
     status_counts: status_counts_,
     active_status: active_status_,
+    initial: initial_,
+    status: list_status_,
     loading: loading_,
+    error: error_,
     overwrite: overwrite_,
     overwrite_apply_all: overwrite_apply_all_,
     overwrite_processing: overwrite_processing_,
@@ -1232,12 +1243,9 @@ function DownloadV2Model(props = {}) {
     },
   };
   const handler = {
-    domainTaskRecord: domain_task_record,
     applyListMeta: apply_list_meta,
     rebuildDerivedState: rebuild_derived_state,
-    syncDomainTask: sync_domain_task,
     syncDomainTasks: sync_domain_tasks,
-    releaseDomainTask: release_domain_task,
   };
 
   async function ready() {
@@ -1288,33 +1296,29 @@ function DownloadV2Model(props = {}) {
     disposables.splice(0).forEach((unlisten) => {
       if (typeof unlisten === "function") unlisten();
     });
-    [...task_entries.keys()].forEach(release_domain_task);
-    Object.values(ui).forEach((store) => store.destroy?.());
+    Object.values(ui).forEach((store) => {
+      if (typeof store.destroy === "function") store.destroy();
+    });
   }
 
   Object.assign(methods, {
     ready,
     clean,
     loadPage: load_page,
-    domainTaskRecord: handler.domainTaskRecord,
     applyListMeta: handler.applyListMeta,
     rebuildDerivedState: handler.rebuildDerivedState,
-    syncDomainTask: handler.syncDomainTask,
     syncDomainTasks: handler.syncDomainTasks,
-    releaseDomainTask: handler.releaseDomainTask,
   });
 
   return { state, ui, methods };
 }
 
 export {
-  DOWNLOAD_STATUS_COUNT_ITEMS,
   DownloadV2Model,
   MaxRunning,
   format_download_percent,
   format_download_size,
   format_download_speed,
-  get_download_status_count,
   is_download_open_external,
   is_download_waiting_status,
   normalize_download_status,

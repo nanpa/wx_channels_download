@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $CorePath = Join-Path $ProjectDir "core\wx_channels_core.exe"
-$GuiVersion = if ($env:WX_CHANNELS_GUI_VERSION) { $env:WX_CHANNELS_GUI_VERSION } else { "0.93-dev" }
+$GuiVersion = if ($env:WX_CHANNELS_GUI_VERSION) { $env:WX_CHANNELS_GUI_VERSION } else { "0.94-dev" }
 $VersionModule = Join-Path $ProjectDir "gui_build_version.py"
 
 if (-not (Test-Path $CorePath)) {

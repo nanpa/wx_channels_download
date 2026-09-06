@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -36,11 +37,13 @@ var article_url_re = regexp.MustCompile(`^/p/([0-9]+)$`)
 var article_appview_url_re = regexp.MustCompile(`^/appview/p/([0-9]+)$`)
 
 type Client struct {
-	http_client   *http.Client
-	cookie_reader *cookies.Reader
-	logger        *zerolog.Logger
-	file_cache    *cache.CacheProvider
-	OnProgress    func(downloaded int64)
+	http_client      *http.Client
+	cookie_reader    *cookies.Reader
+	logger           *zerolog.Logger
+	file_cache       *cache.CacheProvider
+	pcweb_zse_mutex  sync.RWMutex
+	pcweb_zse_cookie string
+	OnProgress       func(downloaded int64)
 }
 
 func (c *Client) Fetch(raw_url string) (any, error) {
@@ -241,17 +244,17 @@ func (c *Client) do_bytes(method, raw_url, referer string) ([]byte, error) {
 	if method != http.MethodGet {
 		return nil, fmt.Errorf("unsupported zhihu HTTP method %s", method)
 	}
+	resolved_url := ResolveRealURL(raw_url)
 	cached_html, cached, err := c.read_cached_html(raw_url)
 	if err != nil {
 		return nil, fmt.Errorf("read cached zhihu HTML response for %q: %w", raw_url, err)
 	}
 	if cached {
-		if _, parse_err := ParseInitialData(cached_html); parse_err == nil {
+		if cached_zhihu_document_is_usable(cached_html, resolved_url) {
 			return cached_html, nil
 		}
 		_ = c.remove_cached_html(raw_url)
 	}
-	resolved_url := ResolveRealURL(raw_url)
 	var fetch_pcweb_document func(string) ([]byte, error)
 	if _, is_answer := ParseAnswerURL(resolved_url); is_answer {
 		fetch_pcweb_document = c.fetch_pcweb_answer_document
@@ -305,6 +308,14 @@ func (c *Client) do_bytes(method, raw_url, referer string) ([]byte, error) {
 		}
 	}
 	return html_data, nil
+}
+
+func cached_zhihu_document_is_usable(body []byte, resolved_url string) bool {
+	if article_url, is_article := ParseArticleURL(resolved_url); is_article {
+		return pcweb_has_article(body, article_url.ArticleID)
+	}
+	_, parse_err := ParseInitialData(body)
+	return parse_err == nil
 }
 
 func set_zhihu_document_headers(req *http.Request, referer string) {
@@ -673,6 +684,9 @@ func parse_article_page(body []byte, article_url ArticleURL) (*ArticlePage, erro
 	article, ok := article_from_initial_data(initial_data, article_url.ArticleID)
 	if !ok {
 		return nil, fmt.Errorf("missing zhihu article entity")
+	}
+	if !article_has_complete_content(article) {
+		return nil, fmt.Errorf("zhihu article content is truncated")
 	}
 	return &ArticlePage{
 		URL:             article_url,

@@ -90,6 +90,12 @@ interface DownloadProgress {
   speed: number;
 }
 
+interface DownloadTaskFile extends Record<string, unknown> {
+  download_dir: string;
+  name: string;
+  file_path: string;
+}
+
 interface DownloadTaskSnapshot {
   id: string | number | null;
   status: string;
@@ -98,6 +104,7 @@ interface DownloadTaskSnapshot {
   filepath: string;
   progress: DownloadProgress;
   error: Error | null;
+  files: DownloadTaskFile[];
   raw: Record<string, unknown>;
 }
 
@@ -110,16 +117,19 @@ interface DownloadTaskState {
   progress: DLRef<DownloadProgress>;
   error: DLRef<Error | null>;
   raw: DLRef<Record<string, unknown>>;
+  websocket_connected: DLRef<boolean>;
+  websocket_connecting: DLRef<boolean>;
 }
 
 interface DownloadTaskMethods {
-  onSuccess(listener: (task: DownloadTaskModelInstance) => void): () => void;
+  onSuccess(listener: (task: Record<string, unknown>) => void): () => void;
   onFail(
     listener: (event: {
       error: Error;
       task: DownloadTaskModelInstance;
     }) => void,
   ): () => void;
+  onFailed(listener: (error: Error) => void): () => void;
   onProgress(
     listener: (event: {
       task: DownloadTaskModelInstance;
@@ -128,6 +138,8 @@ interface DownloadTaskMethods {
     }) => void,
   ): () => void;
   onChange(listener: (event: Record<string, unknown>) => void): () => void;
+  connectWebSocket(): Promise<boolean>;
+  disconnectWebSocket(): Promise<boolean>;
   start(): Promise<DownloadTaskModelInstance>;
   resume(): Promise<DownloadTaskModelInstance>;
   pause(): Promise<DownloadTaskModelInstance>;
@@ -140,9 +152,7 @@ interface DownloadTaskMethods {
   snapshot(): DownloadTaskSnapshot;
 }
 
-interface DownloadTaskModelInstance
-  extends DownloadTaskState,
-    DownloadTaskMethods {
+interface DownloadTaskModelInstance extends DownloadTaskMethods {
   state: DownloadTaskState;
   ui: Record<string, unknown>;
   reqs: Record<string, unknown>;
@@ -150,6 +160,7 @@ interface DownloadTaskModelInstance
   handler: Record<string, (...args: any[]) => any>;
   readonly ready: Promise<DownloadTaskModelInstance>;
   readonly finished: Promise<DownloadTaskModelInstance>;
+  readonly files: DownloadTaskFile[];
 }
 
 type DownloadTaskTarget =
@@ -168,7 +179,22 @@ interface DownloaderState {
 }
 
 interface DownloaderMethods {
-  create(input: string | Record<string, unknown>): DownloadTaskModelInstance;
+  create(
+    input: unknown,
+    options?: {
+      platform?: string;
+      skip?: boolean;
+      existing_action?: "skip" | "duplicate" | "overwrite";
+      build_from_fetch?: boolean;
+      resource_indexes?: number[];
+      download_dir?: string;
+      filename?: string;
+      auto_start?: boolean;
+      parent_task_id?: number;
+      relation_type?: string;
+      config?: Record<string, unknown>;
+    },
+  ): Promise<DownloadTaskModelInstance>;
   prepare(input: string | Record<string, unknown>): Promise<Record<string, unknown>>;
   list(options?: Record<string, unknown>): Promise<
     DLRefArray<DownloadTaskModelInstance>
@@ -241,6 +267,51 @@ declare const DL: DLFactory;
 declare const DownloadTaskModel: DLFactory["DownloadTaskModel"];
 declare const DownloaderModel: DLFactory["DownloaderModel"];
 declare const dl$: DownloaderModelInstance;
+
+interface DownloadTaskResponse {
+  ids: number[];
+  tasks: {
+    code: number;
+    data: {
+      id: number;
+      name: string;
+      platform_id: string;
+      config_json: {
+        download_dir: string;
+        duplicate: boolean;
+        overwrite: boolean;
+        skip: boolean;
+        spec: string;
+        type: number;
+      };
+      content_id: string;
+      cover_url: string;
+      created_at: number;
+      resources: {
+        content_id: string;
+        download_dir: string;
+        downloaded: number;
+        file_path: string;
+        id: number;
+        kind: string;
+        name: string;
+        output_path: string;
+        size: number;
+        speed: number;
+        status: number;
+        task_id: number;
+        type: string;
+        unique_id: string;
+      }[];
+      root_task_id: number;
+      source_url: string;
+      status: number;
+      unique_id: string;
+      updated_at: number;
+    };
+    msg: string;
+  }[];
+}
 
 interface Window {
   Timeless: typeof Timeless;

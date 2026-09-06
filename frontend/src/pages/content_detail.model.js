@@ -28,6 +28,48 @@ function normalize_content_account(raw) {
   };
 }
 
+function normalize_embedded_content(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const raw_content = first_non_empty(source.content, source.Content);
+  const content =
+    raw_content && typeof raw_content === "object" ? raw_content : {};
+  return {
+    ...source,
+    relation_type: first_non_empty(
+      source.relation_type,
+      source.RelationType,
+    ),
+    sort_order: number_or_default(
+      first_non_empty(source.sort_order, source.SortOrder),
+      0,
+    ),
+    content: {
+      ...content,
+      id: first_non_empty(content.id, content.ID),
+      platform_id: first_non_empty(content.platform_id, content.PlatformID),
+      content_type: first_non_empty(
+        content.content_type,
+        content.ContentType,
+        content.type,
+        content.Type,
+      ),
+      title: first_non_empty(
+        content.title,
+        content.Title,
+        content.description,
+        "未命名媒体",
+      ),
+      cover_url: first_non_empty(
+        content.cover_url,
+        content.CoverURL,
+        content.coverUrl,
+      ),
+    },
+    detail_type: first_non_empty(source.detail_type, source.DetailType),
+    detail: first_non_empty(source.detail, source.Detail) || null,
+  };
+}
+
 function normalize_content_detail(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const accounts_source = Array.isArray(source.accounts)
@@ -45,6 +87,18 @@ function normalize_content_detail(raw) {
     : Array.isArray(source.Resources)
       ? source.Resources
       : [];
+  const embedded_source = Array.isArray(source.embedded_contents)
+    ? source.embedded_contents
+    : Array.isArray(source.EmbeddedContents)
+      ? source.EmbeddedContents
+      : [];
+  const embedded_contents = embedded_source.map(normalize_embedded_content);
+  const embedded_content_by_id = new Map(
+    embedded_contents.map((item) => [
+      String((item.content && item.content.id) || ""),
+      item.content,
+    ]),
+  );
   const relations_source =
     source.relations && typeof source.relations === "object"
       ? source.relations
@@ -108,13 +162,28 @@ function normalize_content_detail(raw) {
     detail: first_non_empty(source.detail, source.Detail) || null,
     accounts: accounts_source.map(normalize_content_account).filter(Boolean),
     download_tasks: tasks,
-    resources: resources.map((resource) => ({
-      ...resource,
-      download_task_in_progress: resource_download_task_in_progress(
+    embedded_contents,
+    resources: resources.map((resource) => {
+      const download_task_status = resource_download_task_status(
         resource,
         tasks,
-      ),
-    })),
+      );
+      const resource_content_id = String(
+        first_non_empty(
+          resource && resource.content_id,
+          resource && resource.ContentID,
+          resource && resource.ContentId,
+        ),
+      );
+      return {
+        ...resource,
+        owner_content: embedded_content_by_id.get(resource_content_id) || null,
+        download_task_status,
+        download_task_in_progress: ["running", "paused"].includes(
+          download_task_status,
+        ),
+      };
+    }),
     relations: {
       ...relations_source,
       list: relations,
@@ -153,8 +222,8 @@ function content_source_url(content) {
   ).trim();
 }
 
-function resource_file_url(resource) {
-  const local_path = String(
+function resource_file_path(resource) {
+  return String(
     first_non_empty(
       resource && resource.local_path,
       resource && resource.LocalPath,
@@ -162,6 +231,10 @@ function resource_file_url(resource) {
       resource && resource.FilePath,
     ),
   ).trim();
+}
+
+function resource_file_url(resource) {
+  const local_path = resource_file_path(resource);
   return local_path ? `/api/file?path=${encodeURIComponent(local_path)}` : "";
 }
 
@@ -206,7 +279,7 @@ function content_cover_url(content) {
       );
       const resource = resources_by_id.get(resource_id) || linked_resource;
       const asset_url = resource_file_url(resource);
-      if (resource.exists === true && asset_url) {
+      if (resource_file_available(resource) && asset_url) {
         return asset_url;
       }
     }
@@ -221,44 +294,13 @@ function platform_name(content) {
   if (content && content.platform_name) {
     return content.platform_name;
   }
-  const names = {
-    wxchannels: "视频号",
-    wxmp: "公众号",
-    officialaccount: "公众号",
-    douyin: "抖音",
-    bilibili: "Bilibili",
-    xiaohongshu: "小红书",
-    xhs: "小红书",
-    youtube: "YouTube",
-    zhihu: "知乎",
-    douban: "豆瓣",
-    qidian: "起点中文网",
-    fanqienovel: "番茄小说",
-    "69shuba": "69书吧",
-    ttk: "TT看书",
-  };
   const platform_id = String((content && content.platform_id) || "").trim();
-  return names[platform_id] || platform_id || "未知平台";
+  return window.PLATFORM_NAMES[platform_id] || platform_id || "未知平台";
 }
 
 function content_type_label(value) {
   const type = String(value || "").trim().toLowerCase();
-  const labels = {
-    video: "视频",
-    short_video: "短视频",
-    image: "图片",
-    image_set: "图集",
-    album: "图集",
-    article: "文章",
-    blog: "文章",
-    novel: "小说",
-    audio: "音频",
-    podcast: "播客",
-    music: "音乐",
-    document: "文档",
-    live: "直播",
-  };
-  return labels[type] || type || "内容";
+  return window.CONTENT_TYPE_NAMES[type] || type || "内容";
 }
 
 function normalize_task_status(status) {
@@ -292,7 +334,7 @@ function normalize_task_status(status) {
   return "waiting";
 }
 
-function resource_download_task_in_progress(resource, tasks) {
+function resource_download_task_status(resource, tasks) {
   const task_id = String(
     first_non_empty(
       resource && resource.task_id,
@@ -300,18 +342,15 @@ function resource_download_task_in_progress(resource, tasks) {
       resource && resource.TaskId,
     ),
   ).trim();
-  if (!task_id) return false;
+  if (!task_id) return "waiting";
 
   const task = (Array.isArray(tasks) ? tasks : []).find(
     (item) =>
       String(first_non_empty(item && item.id, item && item.ID)).trim() ===
       task_id,
   );
-  return (
-    normalize_task_status(
-      first_non_empty(task && task.status, task && task.Status),
-    ) ===
-    "running"
+  return normalize_task_status(
+    first_non_empty(task && task.status, task && task.Status),
   );
 }
 
@@ -328,10 +367,48 @@ function task_status(status) {
 }
 
 function resource_download_finished(resource) {
-  const status = String((resource && resource.status) ?? "")
+  const status = String(
+    first_non_empty(resource && resource.status, resource && resource.Status),
+  )
     .trim()
     .toLowerCase();
   return ["2", "finished", "done"].includes(status);
+}
+
+function resource_file_available(resource) {
+  if (!resource_download_finished(resource)) return false;
+  const exists = first_non_empty(
+    resource && resource.exists,
+    resource && resource.Exists,
+  );
+  return exists === true && Boolean(resource_file_url(resource));
+}
+
+function resource_file_status(resource) {
+  if (resource_file_available(resource)) return "已下载";
+  if (resource_download_finished(resource)) return "文件不存在";
+  const task_status = String(
+    first_non_empty(
+      resource && resource.download_task_status,
+      resource && resource.DownloadTaskStatus,
+    ),
+  )
+    .trim()
+    .toLowerCase();
+  if (task_status === "paused") return "已暂停";
+  if (task_status === "failed") return "下载失败";
+  const resource_status = String(
+    first_non_empty(resource && resource.status, resource && resource.Status),
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    task_status === "running" ||
+    ["1", "running", "downloading"].includes(resource_status)
+  ) {
+    return "下载中";
+  }
+  return "等待下载";
 }
 
 function file_type_icon(resource) {
@@ -348,22 +425,6 @@ function file_type_icon(resource) {
       pdf: "file-text",
     }[type] || "file"
   );
-}
-
-function format_time(value) {
-  const timestamp = Number(value);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return "时间未知";
-  }
-  const normalized = timestamp < 1000000000000 ? timestamp * 1000 : timestamp;
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(normalized));
 }
 
 function format_bytes(value) {
@@ -412,24 +473,6 @@ function content_media_assets(assets) {
   });
 }
 
-const content_detail_request = Timeless.kit.request_factory({
-  headers: { "Content-Type": "application/json" },
-  process(response) {
-    if (response.error) {
-      return Timeless.Result.Err(response.error);
-    }
-    const payload = response.data || {};
-    if (payload.code !== 0) {
-      return Timeless.Result.Err(
-        payload.msg || "获取内容详情失败",
-        payload.code,
-        payload.data,
-      );
-    }
-    return Timeless.Result.Ok(payload.data || {});
-  },
-});
-
 function ContentDetailViewModel(props) {
   const detail_id_ = ref(
     String(prop_value(props.contentId) || detail_id_from_location()).trim(),
@@ -440,7 +483,7 @@ function ContentDetailViewModel(props) {
   let request_sequence = 0;
 
   const request_ = new Timeless.kit.RequestCore(
-    (params) => content_detail_request.get("/api/content/detail", params),
+    (params) => window.request.get("/api/content/detail", params),
     {
       client: props.client,
       process(response) {
@@ -454,7 +497,7 @@ function ContentDetailViewModel(props) {
 
   const check_files_request_ = new Timeless.kit.RequestCore(
     (files) =>
-      content_detail_request.post("/api/v1/download_task/check_files", {
+      window.request.post("/api/v1/download_task/check_files", {
         files,
       }),
     { client: props.client },
@@ -498,13 +541,14 @@ function ContentDetailViewModel(props) {
           `${resource.task_id}:${resource.id}`,
         );
         if (!checked) return resource;
-        const exists = checked.exists === true;
+        const download_finished = resource_download_finished(resource);
+        const exists = checked.exists === true && download_finished;
         return {
           ...resource,
           exists,
           local_file_checked: true,
           local_file_exists: exists,
-          local_file_deleted: !exists && resource_download_finished(resource),
+          local_file_deleted: !exists && download_finished,
         };
       }),
     };
@@ -581,19 +625,32 @@ function ContentDetailViewModel(props) {
       }
     },
     openResource(resource) {
+      if (!resource_file_available(resource)) return;
       const url = resource_file_url(resource);
       if (url) {
         window.open(url, "_blank", "noopener,noreferrer");
       }
     },
+    showResource(resource) {
+      if (!resource_file_available(resource)) return;
+      return window.dl$.requests.file.show.run({
+        path: resource_file_path(resource),
+        name: first_non_empty(
+          resource && resource.name,
+          resource && resource.Name,
+        ),
+      });
+    },
     sourceURL: content_source_url,
     coverURL: content_cover_url,
     resourceFileURL: resource_file_url,
+    resourceFileAvailable: resource_file_available,
+    resourceFileStatus: resource_file_status,
     platformName: platform_name,
     typeLabel: content_type_label,
     taskStatus: task_status,
     fileTypeIcon: file_type_icon,
-    formatTime: format_time,
+    formatTime: window.format_time,
     formatBytes: format_bytes,
     contentMediaAssets: content_media_assets,
   };

@@ -1,8 +1,10 @@
 package wxchannelsadapter
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -21,7 +23,6 @@ type ChannelsAdapter struct {
 	runtime_registered bool
 	config             *config.Config
 	routes             *WebsocketRoutes
-	interceptor_config *InterceptorPluginConfig
 	hooks              *hermes.HookManager
 	logger             *zerolog.Logger
 	status_bus         *events.Bus
@@ -78,6 +79,100 @@ func (a *ChannelsAdapter) Fetch(raw_url string) (any, error) {
 	return routes.client.Fetch(wxchannels.FetchParams{URL: raw_url})
 }
 
+// SearchChannelsContact searches for Channels authors through the active
+// browser-backed runtime.
+func (a *ChannelsAdapter) SearchChannelsContact(
+	keyword string,
+	next_marker string,
+) (json.RawMessage, error) {
+	client, err := a.wxchannels_client()
+	if err != nil {
+		return nil, err
+	}
+	return client.SearchChannelsContact(keyword, next_marker)
+}
+
+// FetchChannelsFeedListOfContact fetches a Channels author's feed list through
+// the active browser-backed runtime.
+func (a *ChannelsAdapter) FetchChannelsFeedListOfContact(
+	username string,
+	next_marker string,
+) (json.RawMessage, error) {
+	client, err := a.wxchannels_client()
+	if err != nil {
+		return nil, err
+	}
+	return client.FetchChannelsFeedListOfContact(username, next_marker)
+}
+
+// FetchChannelsLiveReplayList fetches a Channels author's live replay list
+// through the active browser-backed runtime.
+func (a *ChannelsAdapter) FetchChannelsLiveReplayList(
+	username string,
+	next_marker string,
+) (json.RawMessage, error) {
+	client, err := a.wxchannels_client()
+	if err != nil {
+		return nil, err
+	}
+	return client.FetchChannelsLiveReplayList(username, next_marker)
+}
+
+// FetchChannelsFeedProfile fetches one Channels feed profile through the
+// active browser-backed runtime.
+func (a *ChannelsAdapter) FetchChannelsFeedProfile(
+	oid string,
+	nid string,
+	request_url string,
+	eid string,
+) (json.RawMessage, error) {
+	client, err := a.wxchannels_client()
+	if err != nil {
+		return nil, err
+	}
+	return client.FetchChannelsFeedProfile(oid, nid, request_url, eid)
+}
+
+// FetchChannelsFeedCommentList fetches one Channels feed's comments through
+// the active browser-backed runtime.
+func (a *ChannelsAdapter) FetchChannelsFeedCommentList(
+	oid string,
+	nid string,
+	comment_id string,
+	next_marker string,
+) (json.RawMessage, error) {
+	client, err := a.wxchannels_client()
+	if err != nil {
+		return nil, err
+	}
+	return client.FetchChannelsFeedCommentList(oid, nid, comment_id, next_marker)
+}
+
+// FetchChannelsFeedShareUrl fetches one Channels feed's share URL through the
+// active browser-backed runtime.
+func (a *ChannelsAdapter) FetchChannelsFeedShareUrl(
+	oid string,
+) (json.RawMessage, error) {
+	client, err := a.wxchannels_client()
+	if err != nil {
+		return nil, err
+	}
+	return client.FetchChannelsFeedShareUrl(oid)
+}
+
+func (a *ChannelsAdapter) wxchannels_client() (*wxchannels.Client, error) {
+	if a == nil {
+		return nil, errors.New("wxchannels adapter is not initialized")
+	}
+	a.runtime_mu.Lock()
+	routes := a.routes
+	a.runtime_mu.Unlock()
+	if routes == nil || routes.client == nil {
+		return nil, errors.New("wxchannels runtime is not initialized")
+	}
+	return routes.client, nil
+}
+
 // Register creates and initializes a standalone channels adapter.
 func Register(d *adapter.AdapterOptions) (*ChannelsAdapter, error) {
 	channels_adapter := NewChannelsAdapter()
@@ -117,7 +212,6 @@ func (a *ChannelsAdapter) register(d *adapter.AdapterOptions) error {
 		}
 	}
 
-	var interceptor_config *InterceptorPluginConfig
 	if d.Interceptor != nil {
 		if d.Config == nil {
 			return errors.New("wxchannels config is required for interceptor registration")
@@ -129,9 +223,8 @@ func (a *ChannelsAdapter) register(d *adapter.AdapterOptions) error {
 				Str("global_script_path", d.Config.GlobalScriptPath).
 				Msg("wxchannels adapter register: creating interceptor config")
 		}
-		interceptor_config = NewConfig(d.Config, d.Logger)
-		for _, p := range interceptor_config.GetPlugins() {
-			d.Interceptor.AddPostPlugin(p)
+		for _, plugin := range wxchannels.NewInterceptorPlugins(new_interceptor_config(d.Config), d.Logger) {
+			d.Interceptor.AddPostPlugin(plugin)
 		}
 	}
 
@@ -149,7 +242,6 @@ func (a *ChannelsAdapter) register(d *adapter.AdapterOptions) error {
 
 	a.runtime_mu.Lock()
 	a.routes = r
-	a.interceptor_config = interceptor_config
 	a.hooks = d.Hooks
 	a.logger = d.Logger
 	a.config = d.Config
@@ -269,7 +361,6 @@ func (a *ChannelsAdapter) Stop() {
 	routes := a.routes
 	a.runtime_registered = false
 	a.routes = nil
-	a.interceptor_config = nil
 	a.hooks = nil
 	a.logger = nil
 	a.config = nil
@@ -277,6 +368,39 @@ func (a *ChannelsAdapter) Stop() {
 	a.runtime_mu.Unlock()
 	if routes != nil {
 		routes.Stop()
+	}
+}
+
+func new_interceptor_config(c *config.Config) wxchannels.InterceptorConfig {
+	api_protocol := c.GetString("api.protocol")
+	api_bind_hostname := c.GetString("api.hostname")
+	api_port := c.GetInt("api.port")
+	remote_server_protocol := c.GetString("download.remoteServer.protocol")
+	remote_server_hostname := c.GetString("download.remoteServer.hostname")
+	remote_server_port := c.GetInt("download.remoteServer.port")
+	max_running := c.GetInt("download.maxRunning")
+	if max_running == 0 {
+		max_running = 3
+	}
+	return wxchannels.InterceptorConfig{
+		Version:               c.Version,
+		DebugShowError:        c.GetBool("debug.error"),
+		DisableLocationToHome: c.GetBool("channels.disableLocationToHome"),
+		GlobalScriptPath:      c.GlobalScriptPath,
+		InjectContentScript:   c.ContentScriptContent,
+		FrontendVariables: map[string]any{
+			"apiHost":                    config.APIClientHost(api_bind_hostname, api_port),
+			"apiOrigin":                  config.APIClientOrigin(api_protocol, api_bind_hostname, api_port),
+			"apiProtocol":                api_protocol,
+			"remoteServerEnabled":        c.GetBool("download.remoteServer.enabled"),
+			"remoteServerOrigin":         remote_server_protocol + "://" + remote_server_hostname + ":" + strconv.Itoa(remote_server_port),
+			"maxRunning":                 max_running,
+			"downloadFilenameTemplate":   c.GetString("download.filenameTemplate"),
+			"defaultHighest":             c.GetBool("channels.download.defaultHighest") || c.GetBool("download.defaultHighest"),
+			"downloadPauseWhenDownload":  c.GetBool("channels.download.pauseWhenDownload"),
+			"downloadInFrontend":         c.GetBool("channels.download.frontend"),
+			"downloadForceCheckAllFeeds": c.GetBool("channels.download.forceCheckAllFeeds"),
+		},
 	}
 }
 

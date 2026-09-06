@@ -1,13 +1,14 @@
 import { ContentViewModel } from "./content.model.js";
 import ContentDetailPageView from "./content_detail.js";
+import { TablePlatformBadge } from "../components.js";
 
 function ContentDetailDrawer(props) {
   const vm$ = props.store;
   return Drawer(
     {
       store: vm$.ui.contentDetailDrawer$,
-      class: "wx-content-detail-drawer",
-      style: { width: "min(1120px, 100vw)" },
+      class: "dm-drawer--wide",
+      attributes: { n: "content-detail-drawer" },
     },
     [
       ContentDetailPageView({
@@ -28,34 +29,16 @@ function ContentPageView(props) {
   const vm$ = ContentViewModel(props);
   return View(
     {
-      class:
-        "wx-content-page wx-content-library-page wx-browse-history-page dm-page",
+      class: "content-page content-library-page content-list-page page",
       onMounted() {
         vm$.methods.ready();
       },
     },
     [
-      View({ class: "wx-content-toolbar-wrap" }, [
+      View({ class: "content-toolbar-wrap" }, [
         ContentPageToolbar({ store: vm$ }),
       ]),
       ContentPageBody({ store: vm$ }),
-      Show({
-        when: computed(vm$.state.contents, (contents) => contents.length > 0),
-        ok() {
-          return Pagination({
-            summary: vm$.state.range_text,
-            page: vm$.state.page,
-            pageCount: vm$.state.page_count,
-            loading: vm$.state.loading,
-            onPrevious() {
-              vm$.methods.previousPage();
-            },
-            onNext() {
-              vm$.methods.nextPage();
-            },
-          });
-        },
-      }),
       ContentDetailDrawer({
         store: vm$,
         app: props.app,
@@ -67,29 +50,27 @@ function ContentPageView(props) {
 }
 
 function ContentPageActionButton(props) {
+  const semantic_name = props.name || "content-action";
   return Button(
     {
       store: props.store,
-      class: [
-        "wx-content-page-button",
-        props.compact ? "wx-content-action-compact" : "",
-        props.class,
-      ]
-        .filter(Boolean)
-        .join(" "),
+      class: "dm-button--toolbar",
       attributes: {
+        n: semantic_name,
         type: (props.attributes && props.attributes.type) || "button",
         title: props.title || "",
         ...(props.attributes || {}),
       },
       onClick: props.onClick,
       prefix: props.icon
-        ? Timeless.Icon({ name: props.icon, size: props.iconSize || 16 })
+        ? Timeless.Icon({
+            name: props.icon,
+            size: props.iconSize || 16,
+            attributes: { n: `${semantic_name}-icon` },
+          })
         : null,
     },
-    props.label
-      ? [View({ class: "wx-content-action-label" }, [props.label])]
-      : [],
+    props.label ? [props.label] : [],
   );
 }
 
@@ -98,7 +79,7 @@ function ContentPageToolbar(props) {
   return View(
     {
       type: "form",
-      class: "wx-content-toolbar wx-content-filter-form",
+      class: "content-toolbar content-filter-form",
       attributes: { role: "search" },
       onSubmit(event) {
         event.preventDefault();
@@ -106,33 +87,51 @@ function ContentPageToolbar(props) {
       },
     },
     [
-      View({ class: "wx-content-filter-fields" }, [
-        View({ class: "wx-content-search wx-content-filter-search" }, [
-          Timeless.Icon({ name: "search", size: 16 }),
-          Input({
-            store: vm$.ui.input_keyword$,
-            class: "wx-content-search-input",
-            attributes: {
-              name: "keyword",
-              type: "search",
-              autocomplete: "off",
-              "aria-label": "搜索内容标题或描述",
-            },
-          }),
-        ]),
-        // Select({
-        //   store: vm$.ui.select_scope$,
-        //   class: "wx-content-scope-select wx-content-filter-select",
-        //   attributes: { "aria-label": "筛选内容范围" },
-        // }),
+      View(
+        {
+          class:
+            "content-filter-fields dm-flex dm-items-center dm-gap-2",
+        },
+        [
+        View(
+          {
+            class: "content-filter-search",
+            attributes: { n: "content-search-field" },
+          },
+          [
+            Input({
+              store: vm$.ui.input_keyword$,
+              rootAttributes: { n: "content-search-control" },
+              prefix: Timeless.Icon({
+                name: "search",
+                size: 16,
+                attributes: { n: "content-search-icon" },
+              }),
+              attributes: {
+                n: "content-search-input",
+                name: "keyword",
+                type: "search",
+                autocomplete: "off",
+                "aria-label": "搜索内容标题或描述",
+              },
+            }),
+          ],
+        ),
         // Select({
         //   store: vm$.ui.select_content_type$,
-        //   class: "wx-content-type-select wx-content-filter-select",
+        //   class: "content-type-select content-filter-select",
         //   attributes: { "aria-label": "筛选内容类型" },
         // }),
-      ]),
-      View({ class: "wx-content-filter-actions" }, [
+        ],
+      ),
+      View(
+        {
+          class:
+            "content-filter-actions dm-flex dm-items-center dm-gap-2",
+        },
+        [
         ContentPageActionButton({
+          name: "content-search-action",
           store: vm$.ui.btn_search$,
           icon: "search",
           label: "搜索",
@@ -144,29 +143,52 @@ function ContentPageToolbar(props) {
           },
         }),
         ContentPageActionButton({
+          name: "content-reset-action",
           store: vm$.ui.btn_refresh$,
           icon: "rotate-ccw",
           label: "重置",
         }),
-      ]),
+        View(
+          {
+            class: "content-scope-toggle",
+            attributes: { n: "content-scope-toggle" },
+          },
+          [
+            Checkbox({
+              store: vm$.ui.checkbox_all$,
+              id: "wxContentScopeAll",
+              text: "所有",
+              textAttributes: { n: "content-scope-all-text" },
+              attributes: {
+                n: "content-scope-all-checkbox",
+                "aria-label": "显示所有内容",
+              },
+            }),
+          ],
+        ),
+        ],
+      ),
     ],
   );
 }
 
+function content_cover_url(content) {
+  return String((content && content.cover_url) || "").trim();
+}
+
 function ContentRowCover(props) {
   const content = props.content;
+  const cover_url = content_cover_url(content);
+  if (!cover_url) return null;
   const fallback = View(
-    { class: "wx-content-row-cover wx-content-row-cover-fallback" },
+    { class: "content-row-cover content-row-cover-fallback" },
     [Timeless.Icon({ name: "file", size: 18 })],
   );
-  if (!content.cover_url) {
-    return fallback;
-  }
-  return View({ class: "wx-content-row-cover-wrap" }, [
+  return View({ class: "content-row-cover-wrap" }, [
     fallback,
     LazyImg({
-      class: "wx-content-row-cover",
-      src: content.cover_url,
+      class: "content-row-cover",
+      src: cover_url,
       alt: content.title,
       attributes: {
         referrerpolicy: "no-referrer",
@@ -178,9 +200,9 @@ function ContentRowCover(props) {
 function ContentRowAccounts(props) {
   const accounts = props.content.accounts || [];
   if (accounts.length === 0) {
-    return View({ class: "wx-content-row-author" }, ["暂无关联账号"]);
+    return ["暂无关联账号"];
   }
-  return View({ class: "wx-content-row-author" }, [
+  return [
     For({
       each: accounts,
       render(account_) {
@@ -190,12 +212,17 @@ function ContentRowAccounts(props) {
             : account_;
         const name =
           account.nickname || account.alias || account.external_id || "未知";
-        return View({ class: "wx-content-row-author-account" }, [
+        return View(
+          {
+            class:
+              "content-row-author-account dm-flex dm-items-center dm-gap-1-5 dm-min-w-0",
+          },
+          [
           Show({
             when: account.avatar_url,
             ok() {
               return Img({
-                class: "wx-content-row-author-avatar",
+                class: "content-row-author-avatar",
                 src: account.avatar_url,
                 alt: name,
                 attributes: {
@@ -208,194 +235,340 @@ function ContentRowAccounts(props) {
               });
             },
           }),
-          View(
-            {
-              class: "wx-content-row-author-name",
-              attributes: { title: name },
-            },
-            [name],
-          ),
-        ]);
+            View(
+              {
+                class: "content-row-author-name",
+                attributes: { title: name },
+              },
+              [name],
+            ),
+          ],
+        );
       },
     }),
-  ]);
+  ];
 }
 
-function ContentRow(props) {
+function ContentRowStatistics(props) {
+  const statistics = props.statistics;
+  const items = [
+    { key: "in-progress", label: "进行中任务", value: statistics.in_progress },
+    { key: "failed", label: "失败任务", value: statistics.failed },
+    { key: "success", label: "成功任务", value: statistics.total_tasks },
+    { key: "files", label: "文件", value: statistics.files },
+  ].filter((item) => item.value > 0);
+  return [
+    For({
+      each: items,
+      render(item) {
+        return View(
+          {
+            class: `content-row-stat content-row-stat-${item.key}`,
+            attributes: { title: `${item.label}：${item.value}` },
+          },
+          [
+            View({ class: "content-row-stat-value" }, [String(item.value)]),
+            View({ class: "content-row-stat-label" }, [item.label]),
+          ],
+        );
+      },
+    }),
+  ];
+}
+
+function ContentRowMain(props) {
   const vm$ = props.store;
   const content = props.content;
   const favicon = window.PLATFORM_FAVICONS[content.platform_id] || "";
-  const detail_href = vm$.methods.detailHref(content);
+  const title = content.title || "\u00a0";
+  const copied_ = computed(
+    vm$.state.copied_content_id,
+    (copied_content_id) => copied_content_id === content.id,
+  );
+  return [
+    ContentRowCover({ content }),
+    View({ class: "content-row-main dm-min-w-0 dm-flex-1" }, [
+      View(
+        {
+          class: "content-row-title",
+          attributes: { title: content.title },
+        },
+        [title],
+      ),
+      View(
+        {
+          class: "content-row-id",
+          attributes: { n: "content-id" },
+        },
+        [
+          View(
+            {
+              type: "button",
+              class: computed(copied_, (copied) =>
+                copied
+                  ? "content-copy-id-action dm-focus-ring is-copied"
+                  : "content-copy-id-action dm-focus-ring",
+              ),
+              attributes: {
+                n: "content-copy-id-action",
+                type: "button",
+                title: computed(copied_, (copied) =>
+                  copied ? "已复制" : "复制内容 ID",
+                ),
+                "aria-label": computed(copied_, (copied) =>
+                  copied ? "内容 ID 已复制" : "复制内容 ID",
+                ),
+                disabled: content.id ? undefined : true,
+              },
+              onClick(event) {
+                event.stopPropagation();
+                vm$.methods.copyId(content);
+              },
+            },
+            [
+              Show({
+                when: copied_,
+                ok() {
+                  return Timeless.Icon({
+                    name: "check",
+                    size: 12,
+                    attributes: { n: "content-copy-id-success-icon" },
+                  });
+                },
+                else() {
+                  return Timeless.Icon({
+                    name: "copy",
+                    size: 12,
+                    attributes: { n: "content-copy-id-icon" },
+                  });
+                },
+              }),
+            ],
+          ),
+          View(
+            {
+              class: "content-row-id-value",
+              attributes: {
+                n: "content-id-value",
+                title: content.id || "",
+              },
+            },
+            [content.id || "-"],
+          ),
+        ],
+      ),
+      View(
+        {
+          class:
+            "content-row-badges dm-flex dm-items-center dm-gap-1-5",
+        },
+        [
+        TablePlatformBadge({
+          name: "content-platform",
+          favicon,
+          label: vm$.methods.platformName(content),
+        }),
+        View({ class: "content-row-type" }, [
+          vm$.methods.typeLabel(content.content_type),
+        ]),
+        Show({
+          when: content.content_subtype,
+          ok() {
+            return View(
+              {
+                class: "content-row-type content-row-subtype",
+                attributes: {
+                  n: "content-subtype",
+                  title: `subtype: ${content.content_subtype}`,
+                },
+              },
+              [content.content_subtype],
+            );
+          },
+        }),
+        ],
+      ),
+    ]),
+  ];
+}
+
+function ContentSkeletonRow() {
   return View(
     {
-      class: ["wx-content-row", detail_href ? "wx-content-row-clickable" : ""]
-        .filter(Boolean)
-        .join(" "),
-      attributes: detail_href ? { title: "查看内容详情" } : {},
-      onClick() {
-        vm$.methods.openDetail(content);
-      },
+      class: "dm-table-row dm-grid dm-items-center content-skeleton-row",
+      attributes: { n: "content-table-skeleton-row", role: "row" },
     },
     [
-      ContentRowCover({ content }),
-      View({ class: "wx-content-row-main" }, [
-        View(
-          {
-            class: "wx-content-row-title",
-            attributes: { title: content.title },
+      View(
+        {
+          class:
+            "dm-table-cell content-row-main-cell dm-flex dm-items-center dm-gap-4 dm-min-w-0",
+          attributes: { n: "content-table-skeleton-main-cell", role: "cell" },
+        },
+        [
+          View({
+            class: "content-row-cover content-skeleton",
+            attributes: { n: "content-table-skeleton-cover" },
+          }),
+          View(
+            {
+              class: "content-row-main dm-min-w-0 dm-flex-1",
+              attributes: { n: "content-table-skeleton-main" },
+            },
+            [
+              View({
+                class: "content-skeleton content-skeleton-title",
+                attributes: { n: "content-table-skeleton-title" },
+              }),
+              View({
+                class: "content-skeleton content-skeleton-tag",
+                attributes: { n: "content-table-skeleton-tag" },
+              }),
+            ],
+          ),
+        ],
+      ),
+      View(
+        {
+          class: "dm-table-cell",
+          attributes: { n: "content-table-skeleton-account", role: "cell" },
+        },
+        [
+          View({
+            class: "content-skeleton content-skeleton-line",
+            attributes: { n: "content-table-skeleton-account-value" },
+          }),
+        ],
+      ),
+      View(
+        {
+          class: "dm-table-cell",
+          attributes: { n: "content-table-skeleton-time", role: "cell" },
+        },
+        [
+          View({
+            class: "content-skeleton content-skeleton-line-short",
+            attributes: { n: "content-table-skeleton-time-value" },
+          }),
+        ],
+      ),
+      View(
+        {
+          class: "dm-table-cell",
+          attributes: {
+            n: "content-table-skeleton-statistics",
+            role: "cell",
           },
-          [content.title],
-        ),
-        View({ class: "wx-content-row-badges" }, [
-          View({ class: "wx-content-row-platform" }, [
-            Show({
-              when: favicon,
-              ok() {
-                return Img({
-                  class: "wx-content-row-platform-icon",
-                  src: favicon,
-                  alt: "",
-                  attributes: {
-                    loading: "lazy",
-                    referrerpolicy: "no-referrer",
-                  },
-                  onError(event) {
-                    event.target.style.display = "none";
-                  },
-                });
-              },
-            }),
-            vm$.methods.platformName(content),
-          ]),
-          View({ class: "wx-content-row-type" }, [
-            vm$.methods.typeLabel(
-              content.content_type,
-              content.content_subtype,
-            ),
-          ]),
-        ]),
-      ]),
-      ContentRowAccounts({ content }),
-      View({ class: "wx-content-row-meta" }, [
-        Timeless.Icon({ name: "clock3", size: 12 }),
-        vm$.methods.formatTime(content.publish_time),
-      ]),
-      View({ class: "wx-content-row-visits" }, [
-        vm$.methods.downloadStatus(content.download_tasks),
-      ]),
+        },
+        [
+          View({
+            class: "content-skeleton content-skeleton-line-short",
+            attributes: { n: "content-table-skeleton-statistics-value" },
+          }),
+        ],
+      ),
     ],
   );
 }
 
-function ContentTableHead() {
-  return View({ class: "wx-content-row wx-content-row-head" }, [
-    View({ class: "wx-content-row-head-cell" }, ["封面"]),
-    View({ class: "wx-content-row-head-cell" }, ["标题"]),
-    View({ class: "wx-content-row-head-cell" }, ["账号"]),
-    View({ class: "wx-content-row-head-cell" }, ["发布时间"]),
-    View({ class: "wx-content-row-head-cell" }, ["下载状态"]),
-  ]);
-}
-
-function ContentSkeletonRow() {
-  return View({ class: "wx-content-row wx-content-skeleton-row" }, [
-    View({ class: "wx-content-row-cover wx-content-skeleton" }),
-    View({}, [
-      View({ class: "wx-content-skeleton wx-content-skeleton-title" }),
-      View({ class: "wx-content-skeleton wx-content-skeleton-tag" }),
-    ]),
-    View({ class: "wx-content-skeleton wx-content-skeleton-line" }),
-    View({ class: "wx-content-skeleton wx-content-skeleton-line-short" }),
-    View({ class: "wx-content-skeleton wx-content-skeleton-line-short" }),
-  ]);
-}
-
-function ContentListView(props) {
-  const vm$ = props.store;
-  return View({ class: "wx-content-history-list" }, [
-    VirtualListView({
-      style: {
-        height: "100%",
-        "max-height": "100%",
-        overflow: "auto",
-        position: "relative",
-        "box-sizing": "border-box",
-        "background-color": "transparent",
-      },
-      key: "id",
-      size: 10,
-      buffer: 6,
-      gutter: 0,
-      itemHeight: 72,
-      each: vm$.state.contents,
-      render(content_) {
-        const content =
-          content_ && content_.value !== undefined
-            ? content_.value
-            : content_;
-        return ContentRow({ store: vm$, content });
-      },
-    }),
-  ]);
-}
-
 function ContentPageBody(props) {
   const vm$ = props.store;
-  return View({ class: "wx-content-main dm-container" }, [
-    Show({
-      when: vm$.state.loading,
-      ok() {
-        return View(
-          { class: "wx-content-rows dm-panel" },
-          Array.from({ length: 8 }, () => ContentSkeletonRow()),
-        );
+  return Table({
+    name: "content-table",
+    containerClass: "content-main container",
+    containerAttributes: { n: "content-page-main" },
+    panelAttributes: { n: "content-table-panel" },
+    columns: [
+      {
+        name: "main",
+        title: "封面 / 标题",
+        width: "minmax(300px, 2fr)",
+        cellClass:
+          "content-row-main-cell dm-flex dm-items-center dm-gap-4 dm-min-w-0",
+        render(content) {
+          return ContentRowMain({ store: vm$, content });
+        },
       },
-      else() {
-        return Show({
-          when: computed(vm$.state.error, (error) => Boolean(error)),
-          ok() {
-            return View({ class: "wx-content-state" }, [
-              Timeless.Icon({ name: "circle-alert", size: 32 }),
-              View({ class: "wx-content-state-title" }, ["内容加载失败"]),
-              View({ class: "wx-content-state-text" }, [vm$.state.error]),
-              ContentPageActionButton({
-                store: vm$.ui.btn_retry$,
-                icon: "refresh-cw",
-                label: "重试",
-                variant: "primary",
-              }),
-            ]);
-          },
-          else() {
-            return Show({
-              when: computed(
-                vm$.state.contents,
-                (contents) => contents.length > 0,
-              ),
-              ok() {
-                return View(
-                  {
-                    class:
-                      "wx-content-rows wx-content-history-rows dm-panel",
-                  },
-                  [ContentTableHead(), ContentListView({ store: vm$ })],
-                );
-              },
-              else() {
-                return View({ class: "wx-content-state" }, [
-                  Timeless.Icon({ name: "inbox", size: 36 }),
-                  View({ class: "wx-content-state-title" }, ["暂无内容"]),
-                  View({ class: "wx-content-state-text" }, [
-                    "当前筛选条件下没有内容",
-                  ]),
-                ]);
-              },
-            });
-          },
-        });
+      {
+        name: "account",
+        title: "账号",
+        width: "minmax(150px, 1fr)",
+        cellClass:
+          "content-row-author dm-flex dm-items-center dm-gap-1-5 dm-min-w-0",
+        render(content) {
+          return ContentRowAccounts({ content });
+        },
       },
-    }),
-  ]);
+      {
+        name: "time",
+        title: "时间",
+        width: 240,
+        cellClass:
+          "content-row-meta dm-flex dm-items-center dm-gap-1-5 dm-text-muted dm-text-sm dm-tabular-nums dm-whitespace-nowrap",
+        render(content) {
+          return [
+            View(
+              { attributes: { n: "content-time" } },
+              [
+                View(
+                  { attributes: { n: "content-publish-time" } },
+                  [`发布时间: ${vm$.methods.formatTime(content.publish_time)}`],
+                ),
+                View(
+                  { attributes: { n: "content-created-at" } },
+                  [`创建时间: ${vm$.methods.formatTime(content.created_at)}`],
+                ),
+              ],
+            ),
+          ];
+        },
+      },
+      {
+        name: "statistics",
+        title: "统计",
+        width: 200,
+        cellClass: "content-row-stats",
+        render(content) {
+          return ContentRowStatistics({
+            statistics: vm$.methods.statistics(content),
+          });
+        },
+      },
+    ],
+    rows: vm$.state.contents,
+    pagination: {
+      class: "container dm-px-4",
+      summary: vm$.state.range_text,
+      page: vm$.state.page,
+      pageCount: vm$.state.page_count,
+      pageSize: vm$.state.page_size,
+      loading: vm$.state.loading,
+      onChange(page) {
+        return vm$.methods.changePage(page);
+      },
+    },
+    status: vm$.state.status,
+    loading: vm$.state.loading,
+    error: vm$.state.error,
+    skeletonCount: 8,
+    renderSkeletonRow: ContentSkeletonRow,
+    onRow(content) {
+      const detail_href = vm$.methods.detailHref(content);
+      return {
+        class: detail_href ? "content-row-clickable" : "",
+        attributes: detail_href ? { title: "查看内容详情" } : {},
+        onClick() {
+          vm$.methods.openDetail(content);
+        },
+      };
+    },
+    errorTitle: "内容加载失败",
+    retry: {
+      store: vm$.ui.btn_retry$,
+    },
+    emptyTitle: "暂无内容",
+    emptyDescription: "当前筛选条件下没有内容",
+  });
 }
 
 export default ContentPageView;

@@ -1,55 +1,45 @@
 import { AccountViewModel } from "./account.model.js";
+import { TablePlatformBadge } from "../components.js";
 
 function AccountPageView(props) {
   const vm$ = AccountViewModel(props);
 
   return View(
     {
-      class: "wx-content-page wx-account-page dm-page",
+      class: "content-page account-page page",
       onMounted() {
         console.count("AccountPage onMounted");
         vm$.methods.ready();
       },
     },
     [
-      View({ class: "wx-content-toolbar-wrap wx-account-toolbar-wrap" }, [
+      View({ class: "content-toolbar-wrap account-toolbar-wrap" }, [
         AccountPageToolbar({ store: vm$ }),
       ]),
       AccountPageBody({ store: vm$ }),
-      Show({
-        when: computed(vm$.state.accounts, (accounts) => accounts.length > 0),
-        ok() {
-          return Pagination({
-            summary: vm$.state.range_text,
-            page: vm$.state.page,
-            pageCount: vm$.state.page_count,
-            loading: vm$.state.loading,
-            onPrevious() {
-              vm$.methods.previousPage();
-            },
-            onNext() {
-              vm$.methods.nextPage();
-            },
-          });
-        },
-      }),
     ],
   );
 }
 
 function AccountPageActionButton(props) {
+  const semantic_name = props.name || "account-action";
   return Button(
     {
       store: props.store,
-      class: "wx-account-page-button",
+      class: "dm-button--toolbar",
       attributes: {
+        n: semantic_name,
         type: props.type || "button",
         title: props.title || "",
       },
       onClick: props.onClick,
-      prefix: Timeless.Icon({ name: props.icon, size: 16 }),
+      prefix: Timeless.Icon({
+        name: props.icon,
+        size: 16,
+        attributes: { n: `${semantic_name}-icon` },
+      }),
     },
-    [View({ class: "wx-content-action-label" }, [props.label])],
+    [props.label],
   );
 }
 
@@ -58,7 +48,7 @@ function AccountPageToolbar(props) {
   return View(
     {
       type: "form",
-      class: "wx-content-toolbar wx-account-toolbar",
+      class: "content-toolbar account-toolbar",
       attributes: { role: "search" },
       onSubmit(event) {
         event.preventDefault();
@@ -66,21 +56,38 @@ function AccountPageToolbar(props) {
       },
     },
     [
-      View({ class: "wx-content-search wx-account-search" }, [
-        Timeless.Icon({ name: "search", size: 16 }),
-        Input({
-          store: vm$.ui.input_keyword$,
-          class: "wx-content-search-input",
-          attributes: {
-            name: "keyword",
-            type: "text",
-            autocomplete: "off",
-            "aria-label": "搜索账号昵称或 ID",
-          },
-        }),
-      ]),
-      View({ class: "wx-content-filter-actions" }, [
+      View(
+        {
+          class: "account-search",
+          attributes: { n: "account-search-field" },
+        },
+        [
+          Input({
+            store: vm$.ui.input_keyword$,
+            rootAttributes: { n: "account-search-control" },
+            prefix: Timeless.Icon({
+              name: "search",
+              size: 16,
+              attributes: { n: "account-search-icon" },
+            }),
+            attributes: {
+              n: "account-search-input",
+              name: "keyword",
+              type: "text",
+              autocomplete: "off",
+              "aria-label": "搜索账号昵称或 ID",
+            },
+          }),
+        ],
+      ),
+      View(
+        {
+          class:
+            "content-filter-actions dm-flex dm-items-center dm-gap-2",
+        },
+        [
         AccountPageActionButton({
+          name: "account-search-action",
           store: vm$.ui.btn_search$,
           icon: "search",
           label: "搜索",
@@ -92,26 +99,28 @@ function AccountPageToolbar(props) {
           },
         }),
         AccountPageActionButton({
+          name: "account-reset-action",
           store: vm$.ui.btn_refresh$,
           icon: "rotate-ccw",
           label: "重置",
         }),
-      ]),
+        ],
+      ),
     ],
   );
 }
 
 function AccountAvatar(props) {
   const account = props.account;
-  return View({ class: "wx-account-avatar-wrap" }, [
-    View({ class: "wx-account-avatar-fallback" }, [
+  return View({ class: "account-avatar-wrap" }, [
+    View({ class: "account-avatar-fallback" }, [
       Timeless.Icon({ name: "user", size: 20 }),
     ]),
     Show({
       when: account.avatar_url,
       ok() {
         return Img({
-          class: "wx-account-avatar",
+          class: "account-avatar",
           src: account.avatar_url,
           alt: account.nickname,
           attributes: {
@@ -130,193 +139,203 @@ function AccountAvatar(props) {
 function AccountPlatform(props) {
   const vm$ = props.store;
   const account = props.account;
-  const favicon = window.PLATFORM_FAVICONS[account.platform_id] || "";
-  return View({ class: "wx-content-row-platform" }, [
-    Show({
-      when: favicon,
-      ok() {
-        return Img({
-          class: "wx-content-row-platform-icon",
-          src: favicon,
-          alt: "",
-          attributes: {
-            loading: "lazy",
-            referrerpolicy: "no-referrer",
-          },
-          onError(event) {
-            event.target.style.display = "none";
-          },
-        });
-      },
-    }),
-    vm$.methods.platformName(account),
-  ]);
+  return TablePlatformBadge({
+    name: "account-platform",
+    favicon: window.PLATFORM_FAVICONS[account.platform_id] || "",
+    label: vm$.methods.platformName(account),
+  });
 }
 
-function AccountRow(props) {
+function AccountIdentity(props) {
   const vm$ = props.store;
   const account = props.account;
-  return View({ class: "wx-content-row wx-account-row" }, [
-    View(
-      {
-        class: "wx-account-identity",
-        attributes: {
-          title: account.nickname || account.external_id || "",
-        },
-      },
-      [
-        AccountAvatar({ account }),
-        View({ class: "wx-account-details" }, [
-          View({ class: "wx-account-name" }, [account.nickname]),
-          View({ class: "wx-account-meta" }, [
-            AccountPlatform({ store: vm$, account }),
-            View(
-              {
-                class: "wx-account-id",
-                attributes: { title: account.id || "" },
-              },
-              [`ID: ${account.id || "-"}`],
-            ),
-          ]),
-        ]),
-      ],
-    ),
-    View({ class: "wx-account-content-count" }, [
-      Timeless.Icon({ name: "file", size: 12 }),
-      vm$.methods.formatContentCount(account.content_count),
-    ]),
-    View({ class: "wx-account-added" }, [
-      Timeless.Icon({ name: "clock3", size: 12 }),
-      vm$.methods.formatTime(account.created_at),
-    ]),
-  ]);
-}
-
-function AccountTableHead() {
-  return View(
-    { class: "wx-content-row wx-content-row-head wx-account-row" },
-    [
-      View({ class: "wx-content-row-head-cell" }, ["账号"]),
-      View({ class: "wx-content-row-head-cell" }, ["关联内容"]),
-      View({ class: "wx-content-row-head-cell" }, ["添加时间"]),
-    ],
+  const copied_ = computed(
+    vm$.state.copied_account_id,
+    (copied_account_id) => copied_account_id === account.id,
   );
+  return [
+    AccountAvatar({ account }),
+    View({ class: "account-details" }, [
+      View({ class: "account-name" }, [account.nickname]),
+      View({ class: "account-meta", attributes: { n: "account-meta" } }, [
+        View(
+          {
+            type: "button",
+            class: computed(copied_, (copied) =>
+              copied
+                ? "account-copy-id-action dm-focus-ring is-copied"
+                : "account-copy-id-action dm-focus-ring",
+            ),
+            attributes: {
+              n: "account-copy-id-action",
+              type: "button",
+              title: computed(copied_, (copied) =>
+                copied ? "已复制" : "复制账号 ID",
+              ),
+              "aria-label": computed(copied_, (copied) =>
+                copied ? "账号 ID 已复制" : "复制账号 ID",
+              ),
+              disabled: account.id ? undefined : true,
+            },
+            onClick(event) {
+              event.stopPropagation();
+              vm$.methods.copyId(account);
+            },
+          },
+          [
+            Show({
+              when: copied_,
+              ok() {
+                return Timeless.Icon({
+                  name: "check",
+                  size: 12,
+                  attributes: { n: "account-copy-id-success-icon" },
+                });
+              },
+              else() {
+                return Timeless.Icon({
+                  name: "copy",
+                  size: 12,
+                  attributes: { n: "account-copy-id-icon" },
+                });
+              },
+            }),
+          ],
+        ),
+        View(
+          {
+            class: "account-id",
+            attributes: {
+              n: "account-id",
+              title: account.id || "",
+            },
+          },
+          [account.id || "-"],
+        ),
+      ]),
+      AccountPlatform({ store: vm$, account }),
+    ]),
+  ];
 }
 
 function AccountSkeletonRow() {
   return View(
-    { class: "wx-content-row wx-account-row wx-content-skeleton-row" },
+    {
+      class:
+        "dm-table-row dm-grid dm-items-center account-row content-skeleton-row",
+      attributes: { n: "account-table-skeleton-row", role: "row" },
+    },
     [
-      View({ class: "wx-account-identity" }, [
-        View({ class: "wx-account-avatar-wrap wx-content-skeleton" }),
-        View({ class: "wx-account-skeleton-details" }, [
-          View({ class: "wx-content-skeleton wx-content-skeleton-line" }),
-          View({
-            class: "wx-content-skeleton wx-content-skeleton-line-short",
-          }),
-        ]),
-      ]),
-      View({ class: "wx-content-skeleton wx-content-skeleton-line-short" }),
-      View({ class: "wx-content-skeleton wx-content-skeleton-line-short" }),
+      View(
+        {
+          class: "dm-table-cell account-identity",
+          attributes: { n: "account-table-skeleton-account", role: "cell" },
+        },
+        [
+          View({ class: "account-avatar-wrap content-skeleton" }),
+          View({ class: "account-skeleton-details" }, [
+            View({ class: "content-skeleton content-skeleton-line" }),
+            View({
+              class: "content-skeleton content-skeleton-line-short",
+            }),
+          ]),
+        ],
+      ),
+      View(
+        {
+          class: "dm-table-cell",
+          attributes: { n: "account-table-skeleton-count", role: "cell" },
+        },
+        [View({ class: "content-skeleton content-skeleton-line-short" })],
+      ),
+      View(
+        {
+          class: "dm-table-cell",
+          attributes: { n: "account-table-skeleton-time", role: "cell" },
+        },
+        [View({ class: "content-skeleton content-skeleton-line-short" })],
+      ),
     ],
   );
 }
 
-function AccountListView(props) {
-  const vm$ = props.store;
-  return View({ class: "wx-content-history-list" }, [
-    VirtualListView({
-      style: {
-        height: "100%",
-        "max-height": "100%",
-        overflow: "auto",
-        position: "relative",
-        "box-sizing": "border-box",
-        "background-color": "transparent",
-      },
-      key: "id",
-      size: 10,
-      buffer: 6,
-      gutter: 0,
-      itemHeight: 72,
-      each: vm$.state.accounts,
-      render(account_) {
-        const account =
-          account_ && account_.value !== undefined
-            ? account_.value
-            : account_;
-        return AccountRow({ store: vm$, account });
-      },
-    }),
-  ]);
-}
-
 function AccountPageBody(props) {
   const vm$ = props.store;
-  return View({ class: "wx-content-main dm-container" }, [
-    Show({
-      when: vm$.state.initial_loading,
-      ok() {
-        return View(
-          { class: "wx-content-rows dm-panel" },
-          Array.from({ length: 8 }, () => AccountSkeletonRow()),
-        );
+  return Table({
+    name: "account-table",
+    containerClass: "content-main container",
+    containerAttributes: { n: "account-page-main" },
+    panelAttributes: { n: "account-table-panel" },
+    headerClass: "account-row",
+    columns: [
+      {
+        name: "account",
+        title: "账号",
+        cellClass: "account-identity",
+        cellAttributes(account) {
+          return {
+            title: account.nickname || account.external_id || "",
+          };
+        },
+        render(account) {
+          return AccountIdentity({ store: vm$, account });
+        },
       },
-      else() {
-        return Show({
-          when: computed(vm$.state.error, (error) => Boolean(error)),
-          ok() {
-            return View({ class: "wx-content-state" }, [
-              Timeless.Icon({ name: "circle-alert", size: 32 }),
-              View({ class: "wx-content-state-title" }, ["账号加载失败"]),
-              View({ class: "wx-content-state-text" }, [vm$.state.error]),
-              AccountPageActionButton({
-                store: vm$.ui.btn_retry$,
-                icon: "refresh-cw",
-                label: "重试",
-              }),
-            ]);
-          },
-          else() {
-            return Show({
-              when: computed(
-                vm$.state.accounts,
-                (accounts) => accounts.length > 0,
-              ),
-              ok() {
-                return View(
-                  {
-                    class:
-                      "wx-content-rows wx-content-history-rows dm-panel",
-                  },
-                  [AccountTableHead(), AccountListView({ store: vm$ })],
-                );
-              },
-              else() {
-                return View({ class: "wx-content-state" }, [
-                  Timeless.Icon({ name: "inbox", size: 36 }),
-                  View({ class: "wx-content-state-title" }, [
-                    computed(vm$.state.keyword, (keyword) =>
-                      String(keyword || "").trim()
-                        ? "没有匹配的账号"
-                        : "暂无账号",
-                    ),
-                  ]),
-                  View({ class: "wx-content-state-text" }, [
-                    computed(vm$.state.keyword, (keyword) =>
-                      String(keyword || "").trim()
-                        ? "请尝试其他昵称或账号 ID"
-                        : "还没有记录任何账号",
-                    ),
-                  ]),
-                ]);
-              },
-            });
-          },
-        });
+      {
+        name: "content-count",
+        title: "关联内容",
+        width: 110,
+        cellClass: "account-content-count",
+        render(account) {
+          return [
+            vm$.methods.formatContentCount(account.content_count),
+          ];
+        },
       },
-    }),
-  ]);
+      {
+        name: "added",
+        title: "添加时间",
+        width: 180,
+        cellClass: "account-added",
+        render(account) {
+          return [
+            vm$.methods.formatTime(account.created_at),
+          ];
+        },
+      },
+    ],
+    rows: vm$.state.accounts,
+    pagination: {
+      class: "container dm-px-4",
+      summary: vm$.state.range_text,
+      page: vm$.state.page,
+      pageCount: vm$.state.page_count,
+      pageSize: vm$.state.page_size,
+      loading: vm$.state.loading,
+      onChange(page) {
+        return vm$.methods.changePage(page);
+      },
+    },
+    rowKey: "id",
+    status: vm$.state.status,
+    loading: vm$.state.loading,
+    error: vm$.state.error,
+    rowClass: "account-row",
+    skeletonCount: 8,
+    renderSkeletonRow: AccountSkeletonRow,
+    errorTitle: "账号加载失败",
+    retry: {
+      store: vm$.ui.btn_retry$,
+    },
+    emptyTitle: computed(vm$.state.keyword, (keyword) =>
+      String(keyword || "").trim() ? "没有匹配的账号" : "暂无账号",
+    ),
+    emptyDescription: computed(vm$.state.keyword, (keyword) =>
+      String(keyword || "").trim()
+        ? "请尝试其他昵称或账号 ID"
+        : "还没有记录任何账号",
+    ),
+  });
 }
 
 export default AccountPageView;

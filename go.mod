@@ -26,15 +26,17 @@ require (
 	github.com/Danny-Dasilva/CycleTLS/cycletls v1.0.23
 	github.com/adrg/xdg v0.4.0
 	github.com/andybalholm/brotli v1.1.1
-	github.com/dop251/goja v0.0.0-20241024094426-79f3a7efcdbd
+	github.com/andybalholm/cascadia v1.3.2
+	github.com/aymerick/douceur v0.2.0
+	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/ebitengine/oto/v3 v3.2.0-alpha.4
+	github.com/evanw/esbuild v0.21.5
 	github.com/expr-lang/expr v1.16.9
 	github.com/fatih/color v1.16.0
 	github.com/gin-gonic/gin v1.9.1
-	github.com/glebarez/sqlite v1.11.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/ltaoo/echo v0.12.1
-	github.com/ltaoo/velo v1.1.1
+	github.com/ltaoo/velo v1.1.2
 	github.com/pterm/pterm v0.12.50
 	github.com/qtgolang/SunnyNet v1.4.0
 	github.com/rs/zerolog v1.34.0
@@ -44,7 +46,6 @@ require (
 	github.com/tetratelabs/wazero v1.7.3
 	github.com/tjfoc/gmsm v1.4.1
 	github.com/zeebo/blake3 v0.2.4
-	golang.org/x/crypto v0.46.0
 	golang.org/x/net v0.48.0
 	golang.org/x/sys v0.39.0
 	golang.org/x/text v0.32.0
@@ -111,8 +112,6 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/Danny-Dasilva/fhttp v0.0.0-20231127034941-9494939f30fa // indirect
 	github.com/Trisia/gosysproxy v1.1.0 // indirect
-	github.com/andybalholm/cascadia v1.3.2 // indirect
-	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cloudflare/circl v1.5.0 // indirect
@@ -124,6 +123,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/gaukas/godicttls v0.0.4 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
+	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
@@ -197,6 +197,7 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/arch v0.3.0 // indirect
+	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/time v0.14.0 // indirect

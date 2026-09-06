@@ -32,30 +32,23 @@ func PickSpec(obj *wxchannels.ChannelsObject) string {
 func BuildDownloadURLWithSpec(obj *wxchannels.ChannelsObject, spec string) string {
 	base_url := ObjectURL(obj)
 
-	// When spec is non-empty: append X-snsvideoflag parameter
-	if spec != "" {
-		return base_url + "&X-snsvideoflag=" + spec
-	}
-
-	// When spec is empty, download the original video, keeping only encfilekey and token
-	if u, err := url.Parse(base_url); err == nil {
-		filekey := u.Query().Get("encfilekey")
-		token := u.Query().Get("token")
-		if filekey != "" && token != "" {
-			clean := &url.URL{
-				Scheme: u.Scheme,
-				Host:   u.Host,
-				Path:   u.Path,
-			}
-			q := clean.Query()
-			q.Set("encfilekey", filekey)
-			q.Set("token", token)
-			clean.RawQuery = q.Encode()
-			return clean.String()
+	if spec == "" || spec == "original" {
+		parsed_url, err := url.Parse(base_url)
+		if err != nil {
+			return base_url
 		}
+		base_query := parsed_url.Query()
+		original_query := url.Values{}
+		for _, key := range []string{"encfilekey", "token"} {
+			for _, value := range base_query[key] {
+				original_query.Add(key, value)
+			}
+		}
+		parsed_url.RawQuery = original_query.Encode()
+		return parsed_url.String()
 	}
 
-	return base_url
+	return base_url + "&X-snsvideoflag=" + spec
 }
 
 // DecryptKeyInt returns the video decrypt key as int, or 0 on failure.

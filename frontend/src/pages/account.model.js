@@ -112,71 +112,13 @@ function normalize_account_item(raw) {
 }
 
 function account_platform_name(account) {
-  const names = {
-    wxchannels: "视频号",
-    wxmp: "公众号",
-    officialaccount: "公众号",
-    douyin: "抖音",
-    bilibili: "Bilibili",
-    xiaohongshu: "小红书",
-    xhs: "小红书",
-    youtube: "YouTube",
-    zhihu: "知乎",
-    douban: "豆瓣",
-    weibo: "微博",
-    qidian: "起点中文网",
-    fanqienovel: "番茄小说",
-    "69shuba": "69书吧",
-    ttk: "TT看书",
-  };
   const platform_id = String((account && account.platform_id) || "").trim();
-  return names[platform_id] || platform_id || "未知平台";
-}
-
-function normalize_epoch_ms(value) {
-  const timestamp = Number(value);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return 0;
-  }
-  return timestamp < 1000000000000 ? timestamp * 1000 : timestamp;
-}
-
-function format_account_time(value) {
-  const timestamp = normalize_epoch_ms(value);
-  if (!timestamp) {
-    return "时间未知";
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(timestamp));
+  return window.PLATFORM_NAMES[platform_id] || platform_id || "未知平台";
 }
 
 function format_content_count(value) {
   return `${Math.max(0, number_or_default(value, 0))} 条`;
 }
-
-const request = Timeless.kit.request_factory({
-  headers: { "Content-Type": "application/json" },
-  process(response) {
-    if (response.error) {
-      return Timeless.Result.Err(response.error);
-    }
-    const payload = response.data || {};
-    if (payload.code !== 0) {
-      return Timeless.Result.Err(
-        payload.msg,
-        payload.code,
-        payload.data,
-      );
-    }
-    return Timeless.Result.Ok(payload.data || {});
-  },
-});
 
 function AccountViewModel(props) {
   const PAGE_SIZE_DEFAULT = 24;
@@ -189,14 +131,17 @@ function AccountViewModel(props) {
   const page_size_ = ref(PAGE_SIZE_DEFAULT);
   const keyword_ = ref(initial_search.keyword);
   const account_id_ = ref(initial_search.account_id);
+  const initial_ = ref(true);
   const loading_ = ref(false);
   const error_ = ref("");
+  const copied_account_id_ = ref("");
   let request_sequence = 0;
+  let copy_feedback_timer = null;
 
   const reqs = {
     account: {
       list: new Timeless.kit.RequestCore(
-        (params) => request.get("/api/account/list", params),
+        (params) => window.request.get("/api/account/list", params),
         { client: props.client },
       ),
     },
@@ -207,9 +152,17 @@ function AccountViewModel(props) {
     (state) =>
       Math.max(1, Math.ceil(state.total / Math.max(1, state.pageSize))),
   );
-  const initial_loading_ = combine(
-    { loading: loading_, accounts: accounts_ },
-    (state) => state.loading && state.accounts.length === 0,
+  const list_status_ = combine(
+    {
+      initial: initial_,
+      error: error_,
+      accounts: accounts_,
+    },
+    (state) => {
+      if (state.initial) return "initial";
+      if (state.error) return "error";
+      return state.accounts.length === 0 ? "empty" : "normal";
+    },
   );
   const range_text_ = combine(
     {
@@ -236,6 +189,9 @@ function AccountViewModel(props) {
       onChange(value) {
         set_keyword(value);
       },
+      onEnter() {
+        return methods.search();
+      },
     }),
     btn_search$: new Timeless.vm.ButtonCore({
       disabled: loading_.value,
@@ -245,6 +201,8 @@ function AccountViewModel(props) {
       disabled: loading_.value,
       variant: "outline",
       onClick() {
+        set_keyword("");
+        sync_search_location();
         return load(1);
       },
     }),
@@ -327,6 +285,7 @@ function AccountViewModel(props) {
     loading_.as(false);
     if (r.error) {
       error_.as(r.error.message || String(r.error));
+      initial_.as(false);
       return r;
     }
     const data = normalize_account_list_response(
@@ -338,6 +297,7 @@ function AccountViewModel(props) {
     total_.as(data.total);
     page_.as(data.page);
     page_size_.as(data.page_size);
+    initial_.as(false);
     return r;
   }
 
@@ -347,6 +307,15 @@ function AccountViewModel(props) {
       account_id_.as("");
     }
     keyword_.as(keyword);
+  }
+
+  function change_page(target_page) {
+    const page = Math.min(
+      page_count_.value,
+      Math.max(1, Number(target_page) || 1),
+    );
+    if (page === page_.value || loading_.value) return null;
+    return load(page);
   }
 
   const methods = {
@@ -361,20 +330,22 @@ function AccountViewModel(props) {
       return load(1);
     },
     setKeyword: set_keyword,
+    changePage: change_page,
     previousPage() {
-      if (page_.value <= 1 || loading_.value) {
-        return null;
-      }
-      return load(page_.value - 1);
+      return change_page(page_.value - 1);
     },
     nextPage() {
-      if (page_.value >= page_count_.value || loading_.value) {
-        return null;
-      }
-      return load(page_.value + 1);
+      return change_page(page_.value + 1);
+    },
+    copyId(account) {
+      const result = props.app.copy(account.id);
+      copied_account_id_.as(account.id);
+      clearTimeout(copy_feedback_timer);
+      copy_feedback_timer = setTimeout(() => copied_account_id_.as(""), 3000);
+      return result;
     },
     platformName: account_platform_name,
-    formatTime: format_account_time,
+    formatTime: window.format_time,
     formatContentCount: format_content_count,
   };
 
@@ -385,10 +356,12 @@ function AccountViewModel(props) {
     page_size: page_size_,
     keyword: keyword_,
     page_count: page_count_,
-    initial_loading: initial_loading_,
+    initial: initial_,
+    status: list_status_,
     range_text: range_text_,
     loading: loading_,
     error: error_,
+    copied_account_id: copied_account_id_,
   };
 
   return { state, ui, methods };

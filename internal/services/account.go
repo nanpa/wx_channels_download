@@ -1,7 +1,10 @@
 package services
 
 import (
+	"context"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -13,10 +16,100 @@ type AccountService struct {
 	db *gorm.DB
 }
 
+const default_account_page_size = 24
+
 func NewAccountService(db *gorm.DB) *AccountService {
 	return &AccountService{
 		db: db,
 	}
+}
+
+type AccountListInput struct {
+	Page      int
+	PageSize  int
+	Keyword   string
+	AccountID string
+}
+
+type AccountListItem struct {
+	Account      model.Account `gorm:"embedded"`
+	ContentCount int64
+}
+
+type AccountListPage struct {
+	List     []AccountListItem
+	Total    int64
+	Page     int
+	PageSize int
+}
+
+// ListAccounts loads one account page and its association counts.
+func (s *AccountService) ListAccounts(ctx context.Context, input AccountListInput) (*AccountListPage, error) {
+	if s == nil || s.db == nil {
+		return nil, ErrDBNotInitialized
+	}
+	page := input.Page
+	if page <= 0 {
+		page = 1
+	}
+	page_size := input.PageSize
+	if page_size <= 0 {
+		page_size = default_account_page_size
+	}
+	if page_size > 200 {
+		page_size = 200
+	}
+
+	db := s.db.WithContext(ctx)
+	account_query := db.Model(&model.Account{})
+	account_id := strings.TrimSpace(input.AccountID)
+	if account_id != "" {
+		account_query = account_query.Where("id = ?", account_id)
+	}
+	keyword := strings.TrimSpace(input.Keyword)
+	if keyword != "" {
+		pattern := "%" + keyword + "%"
+		account_query = account_query.Where(
+			"id LIKE ? OR external_id LIKE ? OR alias LIKE ? OR nickname LIKE ?",
+			pattern,
+			pattern,
+			pattern,
+			pattern,
+		)
+	}
+
+	var total int64
+	if err := account_query.Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("查询账号总数失败: %w", err)
+	}
+	page_count := 1
+	if total > 0 {
+		page_count = int((total + int64(page_size) - 1) / int64(page_size))
+	}
+	if page > page_count {
+		page = page_count
+	}
+
+	var items []AccountListItem
+	if err := account_query.
+		Select(`account.id, account.platform_id, account.external_id, account.alias,
+			account.nickname, account.signature, account.avatar_url, account.profile_url,
+			account.follower_count, account.created_at, account.updated_at,
+			(SELECT COUNT(*) FROM content_account
+				WHERE content_account.account_id = account.id) AS content_count`).
+		Order("created_at DESC, id DESC").
+		Limit(page_size).
+		Offset((page - 1) * page_size).
+		Scan(&items).Error; err != nil {
+		return nil, fmt.Errorf("查询账号失败: %w", err)
+	}
+
+	return &AccountListPage{
+		List:     items,
+		Total:    total,
+		Page:     page,
+		PageSize: page_size,
+	}, nil
 }
 
 type Influencer struct {

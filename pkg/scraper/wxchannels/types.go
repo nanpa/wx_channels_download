@@ -169,6 +169,21 @@ type ChannelsLiveInfo struct {
 	LiveCoverImgs    []any                   `json:"liveCoverImgs"`
 }
 
+func (i *ChannelsLiveInfo) UnmarshalJSON(data []byte) error {
+	type alias ChannelsLiveInfo
+	aux := &struct {
+		AnchorStatusFlag flexibleString `json:"anchorStatusFlag"`
+		*alias
+	}{
+		alias: (*alias)(i),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	i.AnchorStatusFlag = string(aux.AnchorStatusFlag)
+	return nil
+}
+
 type ChannelsContactExtInfo struct {
 	Sex      int    `json:"sex,omitempty"`
 	Country  string `json:"country,omitempty"`
@@ -177,11 +192,12 @@ type ChannelsContactExtInfo struct {
 }
 
 type ChannelsContact struct {
-	Username    string `json:"username"`
-	Nickname    string `json:"nickname"`
-	HeadUrl     string `json:"headUrl"`
-	Signature   string `json:"signature"`
-	CoverImgUrl string `json:"coverImgUrl"`
+	Username        string `json:"username"`
+	Nickname        string `json:"nickname"`
+	HeadUrl         string `json:"headUrl"`
+	Signature       string `json:"signature"`
+	CoverImgUrl     string `json:"coverImgUrl"`
+	LiveCoverImgUrl string `json:"liveCoverImgUrl"`
 }
 
 type ShortTitle struct {
@@ -453,6 +469,12 @@ type ChannelsLiveReplayListBody struct {
 	Username   string `json:"username"`
 	NextMarker string `json:"next_marker"`
 }
+type ChannelsLiveInfoBody struct {
+	Username      string `json:"username"`
+	ObjectId      string `json:"oid"`
+	ObjectNonceId string `json:"nid"`
+	LiveId        string `json:"id"`
+}
 type ChannelsInteractionedFeedListBody struct {
 	Flag       string `json:"flag"`
 	NextMarker string `json:"next_marker"`
@@ -623,6 +645,21 @@ type ChannelsFollowLiveInfo struct {
 	ReplaySetting    *ChannelsFollowLiveReplaySetting `json:"replaySetting,omitempty"`
 }
 
+func (i *ChannelsFollowLiveInfo) UnmarshalJSON(data []byte) error {
+	type alias ChannelsFollowLiveInfo
+	aux := &struct {
+		AnchorStatusFlag flexibleString `json:"anchorStatusFlag"`
+		*alias
+	}{
+		alias: (*alias)(i),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	i.AnchorStatusFlag = string(aux.AnchorStatusFlag)
+	return nil
+}
+
 type ChannelsFollowContact struct {
 	Username        string                        `json:"username"`
 	Nickname        string                        `json:"nickname"`
@@ -708,16 +745,32 @@ type SphProfile struct {
 	ErrMsg          string `json:"err_msg,omitempty"`
 }
 
-// JoinLivePayload is the structure used for joinLive response detection.
-// The frontend merges joinLive data with feed profile info before sending.
+type JoinLiveInfo struct {
+	LiveId    string `json:"liveId"`
+	StartTime int    `json:"startTime"`
+}
+
+func (i *JoinLiveInfo) UnmarshalJSON(data []byte) error {
+	type alias JoinLiveInfo
+	aux := &struct {
+		LiveId flexibleString `json:"liveId"`
+		*alias
+	}{
+		alias: (*alias)(i),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	i.LiveId = string(aux.LiveId)
+	return nil
+}
+
+// JoinLivePayload is the raw joinLive response used for live stream detection.
 type JoinLivePayload struct {
 	LiveSdkInfo *struct {
 		LiveCdnUrl string `json:"liveCdnUrl"`
 	} `json:"liveSdkInfo"`
-	LiveInfo *struct {
-		LiveId    string `json:"liveId"`
-		StartTime int    `json:"startTime"`
-	} `json:"liveInfo"`
+	LiveInfo        *JoinLiveInfo    `json:"liveInfo"`
 	LiveDescription string           `json:"liveDescription"`
 	Nickname        string           `json:"nickname"`
 	Username        string           `json:"username"`

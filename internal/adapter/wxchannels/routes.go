@@ -52,6 +52,7 @@ func (r *WebsocketRoutes) RegisterRoutes(registrar adapter.RouteRegistrar) {
 	registrar.RegisterGET("/api/channels/contact/search", r.HandleSearchChannelsContact)
 	registrar.RegisterGET("/api/channels/contact/feed/list", r.HandleFetchFeedListOfContact)
 	registrar.RegisterGET("/api/channels/feed/profile", r.HandleFetchFeedProfile)
+	registrar.RegisterGET("/api/channels/live/profile", r.HandleFetchLiveProfile)
 	registrar.RegisterGET("/api/channels/live/replay/list", r.HandleFetchLiveReplayList)
 	registrar.RegisterGET("/api/channels/interactioned/list", r.HandleFetchInteractionedFeedList)
 	registrar.RegisterGET("/api/channels/follow/list", r.HandleFetchFollowList)
@@ -195,6 +196,21 @@ func (r *WebsocketRoutes) HandleFetchLiveReplayList(ctx *gin.Context) {
 	result.Ok(ctx, resp)
 }
 
+// HandleFetchLiveProfile fetches a live profile through the frontend joinLive API.
+func (r *WebsocketRoutes) HandleFetchLiveProfile(ctx *gin.Context) {
+	username := ctx.Query("username")
+	oid := ctx.Query("oid")
+	nid := ctx.Query("nid")
+	live_id := ctx.Query("id")
+
+	resp, err := r.client.FetchLiveInfo(username, oid, nid, live_id)
+	if err != nil {
+		result.Err(ctx, 400, err.Error())
+		return
+	}
+	result.Ok(ctx, resp)
+}
+
 // HandleFetchInteractionedFeedList fetches the user's favorited or liked video list.
 func (r *WebsocketRoutes) HandleFetchInteractionedFeedList(ctx *gin.Context) {
 	flag := ctx.Query("flag")
@@ -268,19 +284,7 @@ func (r *WebsocketRoutes) HandleFetchFeedProfile(ctx *gin.Context) {
 	nid := ctx.Query("nid")
 	req_url := ctx.Query("url")
 	eid := ctx.Query("eid")
-
-	if eid == "" && req_url != "" {
-		if parsed_url, err := url.Parse(req_url); err == nil {
-			if _eid := parsed_url.Query().Get("eid"); _eid != "" {
-				eid = _eid
-				req_url = ""
-			}
-		}
-	}
-	// When oid/nid are provided directly, clear reqUrl to avoid browser-side timeout from relative URL parsing
-	if oid != "" && nid != "" {
-		req_url = ""
-	}
+	oid, nid, req_url, eid = normalize_feed_profile_args(oid, nid, req_url, eid)
 
 	resp, err := r.client.FetchChannelsFeedProfile(oid, nid, req_url, eid)
 	if err != nil {
@@ -288,6 +292,23 @@ func (r *WebsocketRoutes) HandleFetchFeedProfile(ctx *gin.Context) {
 		return
 	}
 	result.Ok(ctx, resp)
+}
+
+func normalize_feed_profile_args(oid string, nid string, req_url string, eid string) (string, string, string, string) {
+	if eid == "" && req_url != "" {
+		if parsed_url, err := url.Parse(req_url); err == nil {
+			if parsed_eid := parsed_url.Query().Get("eid"); parsed_eid != "" {
+				eid = parsed_eid
+				req_url = ""
+			}
+		}
+	}
+	// When oid/nid are provided directly, clear req_url to avoid a browser-side
+	// timeout while parsing a relative URL.
+	if oid != "" && nid != "" {
+		req_url = ""
+	}
+	return oid, nid, req_url, eid
 }
 
 // HandleFetchSharedFeedProfile fetches shared video details.

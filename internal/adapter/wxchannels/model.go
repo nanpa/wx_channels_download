@@ -87,22 +87,23 @@ func to_content_video_variants(obj *wxchannels.ChannelsObject, video_id string) 
 	}
 
 	variants := make([]model.ContentVideoVariant, 0, len(specs)+1)
-	variants = append(variants, model.ContentVideoVariant{
-		VideoId:    video_id,
-		VariantKey: "default",
-		Spec:       "original",
-		Width:      positive_dimension_pointer(media.Width),
-		Height:     positive_dimension_pointer(media.Height),
-		Size:       int64(media.FileSize),
-		StreamType: model.ContentVideoVariantStreamTypeProgressive,
-		HasVideo:   1,
-		HasAudio:   1,
-		IsDefault:  1,
-		URL:        BuildDownloadURLWithSpec(obj, ""),
-	})
+	// Temporarily disabled: do not expose the synthetic original-video option.
+	// variants = append(variants, model.ContentVideoVariant{
+	// 	VideoId:    video_id,
+	// 	VariantKey: "default",
+	// 	Spec:       "original",
+	// 	Width:      positive_dimension_pointer(media.Width),
+	// 	Height:     positive_dimension_pointer(media.Height),
+	// 	Size:       int64(media.FileSize),
+	// 	StreamType: model.ContentVideoVariantStreamTypeProgressive,
+	// 	HasVideo:   1,
+	// 	HasAudio:   1,
+	// 	IsDefault:  1,
+	// 	URL:        BuildDownloadURLWithSpec(obj, ""),
+	// })
 
 	seen_variant_keys := make(map[string]struct{}, len(specs)+1)
-	seen_variant_keys["default"] = struct{}{}
+	// seen_variant_keys["default"] = struct{}{}
 	for _, spec := range specs {
 		variant_key := strings.TrimSpace(spec.FileFormat)
 		if variant_key == "" {
@@ -149,12 +150,34 @@ func select_content_video_variant(detail any, spec string) {
 	}
 }
 
+func selected_content_video_size(detail any) int64 {
+	video, ok := detail.(*model.ContentVideo)
+	if !ok || video == nil {
+		return 0
+	}
+	for variant_index := range video.Variants {
+		variant := &video.Variants[variant_index]
+		if variant.IsDefault == 0 {
+			continue
+		}
+		resource_size := variant.Size
+		if resource_size <= 0 && variant.VariantKey == "default" {
+			resource_size = video.Size
+		}
+		variant.Size = resource_size
+		video.Size = resource_size
+		return resource_size
+	}
+	return 0
+}
+
 func resolve_video_download_spec(obj *wxchannels.ChannelsObject, config map[string]any, default_highest bool) string {
 	configured_variant_key := config_string(config, "video_variant_key")
 	configured_spec := config_string(config, "video_variant_spec")
 	if configured_spec == "" {
 		configured_spec = config_string(config, "spec")
 	}
+	_, explicit_spec := config["spec"]
 	if configured_variant_key == "default" {
 		configured_spec = "original"
 	} else if configured_spec == "" && configured_variant_key != "" {
@@ -162,6 +185,12 @@ func resolve_video_download_spec(obj *wxchannels.ChannelsObject, config map[stri
 	}
 
 	if configured_spec == "" {
+		// The injected downloader historically uses spec: "" to request the
+		// original resource. Preserve the distinction between that explicit
+		// value and an omitted spec, which selects the normal default variant.
+		if explicit_spec {
+			return ""
+		}
 		if default_highest {
 			return ""
 		}
@@ -346,9 +375,25 @@ func ToContent(obj *wxchannels.ChannelsObject) (*model.Content, any, error) {
 // BuildBrowseHistory converts an intercepted ChannelsObject into the standard
 // browse history result.
 func (a *ChannelsAdapter) BuildBrowseHistory(content_json json.RawMessage) (*adapter.BrowseHistoryResult, error) {
-	var obj wxchannels.ChannelsObject
-	if err := json.Unmarshal(content_json, &obj); err != nil {
-		return nil, fmt.Errorf("解析视频号内容失败: %w", err)
+	obj, live, is_live_page, err := parse_live_page_payload(content_json)
+	if err != nil {
+		return nil, err
+	}
+	if !is_live_page {
+		if err := json.Unmarshal(content_json, &obj); err != nil {
+			return nil, fmt.Errorf("解析视频号内容失败: %w", err)
+		}
+	} else {
+		if obj.LiveInfo == nil {
+			obj.LiveInfo = &wxchannels.ChannelsLiveInfo{}
+		}
+		if live.LiveInfo != nil {
+			obj.ID = live.LiveInfo.LiveId
+			obj.CreateTime = live.LiveInfo.StartTime
+		}
+		if live.LiveDescription != "" {
+			obj.ObjectDesc.Description = live.LiveDescription
+		}
 	}
 
 	account_username := strings.TrimSpace(obj.Contact.Username)
@@ -374,6 +419,9 @@ func (a *ChannelsAdapter) BuildBrowseHistory(content_json json.RawMessage) (*ada
 	cover_url := ""
 	cover_width := ""
 	cover_height := ""
+	if obj.LiveInfo != nil {
+		cover_url = strings.TrimSpace(obj.Contact.LiveCoverImgUrl)
+	}
 	media_list := obj.Files
 	if len(media_list) == 0 {
 		media_list = obj.ObjectDesc.Media
@@ -391,7 +439,9 @@ func (a *ChannelsAdapter) BuildBrowseHistory(content_json json.RawMessage) (*ada
 	publish_time := int64(obj.CreateTime)
 
 	content_type := "video"
-	if obj.ObjectDesc.MediaType == wxchannels.MediaTypePicture {
+	if obj.LiveInfo != nil {
+		content_type = "live"
+	} else if obj.ObjectDesc.MediaType == wxchannels.MediaTypePicture {
 		content_type = "album"
 	}
 
@@ -484,13 +534,58 @@ const (
 	mime_application_zip = "application/zip"
 )
 
+type live_page_payload struct {
+	Profile json.RawMessage `json:"profile"`
+	Live    json.RawMessage `json:"live"`
+}
+
+func parse_live_page_payload(content_json json.RawMessage) (wxchannels.ChannelsObject, wxchannels.JoinLivePayload, bool, error) {
+	var profile wxchannels.ChannelsObject
+	var live wxchannels.JoinLivePayload
+	var payload live_page_payload
+	if err := json.Unmarshal(content_json, &payload); err != nil {
+		return profile, live, false, err
+	}
+	if len(payload.Profile) == 0 && len(payload.Live) == 0 {
+		return profile, live, false, nil
+	}
+	if len(payload.Profile) == 0 || strings.TrimSpace(string(payload.Profile)) == "null" {
+		return profile, live, true, errors.New("直播数据缺少原始 profile")
+	}
+	if len(payload.Live) == 0 || strings.TrimSpace(string(payload.Live)) == "null" {
+		return profile, live, true, errors.New("直播数据缺少原始 live")
+	}
+	if err := json.Unmarshal(payload.Profile, &profile); err != nil {
+		return profile, live, true, fmt.Errorf("解析直播 profile 失败: %w", err)
+	}
+	if err := json.Unmarshal(payload.Live, &live); err != nil {
+		return profile, live, true, fmt.Errorf("解析直播 live 失败: %w", err)
+	}
+	return profile, live, true, nil
+}
+
 func (a *ChannelsAdapter) BuildDownloadTask(content_json json.RawMessage, config_raw json.RawMessage) (*adapter.DownloadTaskResult, error) {
 	var config map[string]any
 	if err := json.Unmarshal(config_raw, &config); err != nil {
 		return nil, fmt.Errorf("解析下载配置失败: %w", err)
 	}
 
-	// Live stream detection: joinLive response contains liveSdkInfo
+	profile, live, is_live_page, err := parse_live_page_payload(content_json)
+	if err != nil {
+		return nil, err
+	}
+	if is_live_page {
+		live.Contact = &profile.Contact
+		if live.LiveDescription == "" {
+			live.LiveDescription = profile.ObjectDesc.Description
+		}
+		if live.LiveSdkInfo == nil || live.LiveSdkInfo.LiveCdnUrl == "" {
+			return nil, errors.New("直播数据缺少直播流地址")
+		}
+		return a.build_live_download_task(&live, config)
+	}
+
+	// Legacy live payload detection: joinLive response contains liveSdkInfo.
 	var jl wxchannels.JoinLivePayload
 	if json.Unmarshal(content_json, &jl) == nil && jl.LiveSdkInfo != nil && jl.LiveSdkInfo.LiveCdnUrl != "" {
 		return a.build_live_download_task(&jl, config)
@@ -674,8 +769,8 @@ func (a *ChannelsAdapter) BuildDownloadTask(content_json json.RawMessage, config
 		UniqueID:  resource_unique_id,
 		Extra:     decrypt_extra_json,
 	}
-	if ve, ok := ext.(*model.ContentVideo); ok {
-		video_resource.Size = ve.Size
+	if resource_kind == mime_video_mp4 {
+		video_resource.Size = selected_content_video_size(ext)
 	}
 	video_endpoint := model.DownloadEndpoint{
 		Protocol: "https",
@@ -797,6 +892,14 @@ func (a *ChannelsAdapter) build_live_download_task(jl *wxchannels.JoinLivePayloa
 		author_avatar_url = jl.Contact.HeadUrl
 	}
 
+	live_cover_url := ""
+	if jl.Contact != nil {
+		if author_avatar_url == "" {
+			author_avatar_url = jl.Contact.HeadUrl
+		}
+		live_cover_url = jl.Contact.LiveCoverImgUrl
+	}
+
 	title := config_string(config, "filename")
 	if title == "" {
 		if jl.LiveDescription != "" {
@@ -806,7 +909,9 @@ func (a *ChannelsAdapter) build_live_download_task(jl *wxchannels.JoinLivePayloa
 		}
 	}
 
-	now := time.Now().Unix()
+	now := time.Now()
+	now_millis := now.UnixMilli()
+	now_seconds := now.Unix()
 	live_config := build_config_json(config, config_string(config, "spec"), wxchannels.MediaTypeLive)
 	config_json, _ := json.Marshal(live_config)
 	metadata_json, _ := json.Marshal(map[string]any{
@@ -814,7 +919,7 @@ func (a *ChannelsAdapter) build_live_download_task(jl *wxchannels.JoinLivePayloa
 		"id":           live_id,
 		"content_type": "live",
 		"author":       author_nickname,
-		"download_at":  now,
+		"download_at":  now_seconds,
 	})
 
 	content := &model.Content{
@@ -823,9 +928,10 @@ func (a *ChannelsAdapter) build_live_download_task(jl *wxchannels.JoinLivePayloa
 		ExternalId: live_id,
 		Type:       "live",
 		Title:      title,
+		CoverURL:   live_cover_url,
 		Timestamps: model.Timestamps{
-			CreatedAt: now,
-			UpdatedAt: now,
+			CreatedAt: now_millis,
+			UpdatedAt: now_millis,
 		},
 	}
 	if session_start_time > 0 {
@@ -840,14 +946,14 @@ func (a *ChannelsAdapter) build_live_download_task(jl *wxchannels.JoinLivePayloa
 		Nickname:   author_nickname,
 		AvatarURL:  author_avatar_url,
 		Timestamps: model.Timestamps{
-			CreatedAt: now,
-			UpdatedAt: now,
+			CreatedAt: now_millis,
+			UpdatedAt: now_millis,
 		},
 	}
 
 	unique_id := live_id + "_" + strconv.FormatInt(session_start_time, 10)
 	if session_start_time == 0 {
-		unique_id = live_id + "_" + strconv.FormatInt(now, 10)
+		unique_id = live_id + "_" + strconv.FormatInt(now_seconds, 10)
 	}
 
 	stream_resource := model.DownloadResource{
@@ -873,6 +979,7 @@ func (a *ChannelsAdapter) build_live_download_task(jl *wxchannels.JoinLivePayloa
 			UniqueID:     unique_id,
 			PlatformId:   PlatformID,
 			Status:       model.TaskStatusWaiting,
+			CoverURL:     live_cover_url,
 			ConfigJSON:   string(config_json),
 			MetadataJSON: string(metadata_json),
 		},
@@ -900,6 +1007,15 @@ func parse_channels_object_for_download(content_json json.RawMessage) (wxchannel
 	}
 	if channels_object_has_download_shape(&obj) {
 		return obj, nil
+	}
+	var profile_resp wxchannels.ChannelsFeedProfileResp
+	if err := json.Unmarshal(content_json, &profile_resp); err == nil {
+		if profile_resp.ErrCode != 0 {
+			return obj, fmt.Errorf("fetch channels feed profile: %s", profile_resp.ErrMsg)
+		}
+		if channels_object_has_download_shape(&profile_resp.Data.Object) {
+			return profile_resp.Data.Object, nil
+		}
 	}
 	shared_obj, ok, err := shared_feed_profile_to_channels_object(content_json)
 	if err != nil {

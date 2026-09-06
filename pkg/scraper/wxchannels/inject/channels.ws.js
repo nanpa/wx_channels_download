@@ -52,11 +52,11 @@ async function fetchExportIdWithShareId(data) {
 }
 async function fetchFeedProfileWith(data) {
   if (data.url) {
-    if (data.url.match(/sph/)) {
+    if (data.url.match(/\/sph/)) {
       var [err, eid] = await fetchExportIdWithShareId(data);
       if (err) {
         var m = data.url.match(/\/([a-zA-Z0-9]{1,})$/);
-        if (m[1]) {
+        if (m && m[1]) {
           data.eid = m[1];
         } else {
           return [err, null];
@@ -369,6 +369,42 @@ function ChannelsWebsocketClient() {
         try {
           var r = await WXU.API4.finderGetPlayHistory(payload);
           console.log("[DOWNLOADER]finderGetPlayHistory", r, payload);
+          resp({
+            ...r,
+            payload,
+          });
+        } catch (err) {
+          resp({
+            errCode: 1011,
+            errMsg: err.message,
+            payload,
+          });
+        }
+        return;
+      }
+      if (key === "key:channels:live_info") {
+        var payload = {
+          clientStatus: {
+            videoDecoderSupportMask: 1,
+          },
+          finderUsername: data.username,
+          liveId: data.id,
+          objectId: data.oid,
+          objectNonceId: data.nid,
+          scene: 2,
+        };
+        var liveAPI = WXU.LiveAPI;
+        if (!liveAPI || typeof liveAPI.joinLive !== "function") {
+          resp({
+            errCode: 1011,
+            errMsg: "joinLive API is unavailable",
+            payload,
+          });
+          return;
+        }
+        try {
+          var r = await liveAPI.joinLive(payload);
+          console.log("[DOWNLOADER]joinLive", r, payload);
           resp({
             ...r,
             payload,

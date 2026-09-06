@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"wx_channel/internal/application"
+	"wx_channel/internal/config"
 	"wx_channel/pkg/system"
 )
 
@@ -90,6 +91,7 @@ func apply_server_config_defaults() {
 }
 
 func run_server() error {
+	apply_server_config_defaults()
 	return application.Start(Cfg)
 }
 
@@ -266,11 +268,7 @@ func listen_addr(host string, port int) string {
 }
 
 func dial_addr(host string, port int) string {
-	host = strings.Trim(strings.TrimSpace(host), "[]")
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	return net.JoinHostPort(host, strconv.Itoa(port))
+	return net.JoinHostPort(config.APIClientHostname(host), strconv.Itoa(port))
 }
 
 func check_port(host string, port int) bool {
