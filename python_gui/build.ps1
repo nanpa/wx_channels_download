@@ -18,7 +18,7 @@ try {
         --clean `
         --windowed `
         --onedir `
-        --name WxChannelsDownload `
+        --name 视频号下载 `
         --add-binary "core\wx_channels_core.exe;core" `
         --add-data "default-config.yaml;." `
         --add-data "..\LICENSE;." `
@@ -28,4 +28,4 @@ finally {
     Pop-Location
 }
 
-Write-Host "Build completed: $ProjectDir\dist\WxChannelsDownload\WxChannelsDownload.exe"
+Write-Host "Build completed: $ProjectDir\dist\视频号下载\视频号下载.exe"

@@ -67,11 +67,11 @@ jobs:
 
       - name: Create distribution archive
         shell: pwsh
-        run: Compress-Archive -Path .\python_gui\dist\WxChannelsDownload\* -DestinationPath .\WxChannelsDownload-windows-x86_64-v0.94.${{ github.run_number }}.zip
+        run: Compress-Archive -Path .\python_gui\dist\视频号下载\* -DestinationPath .\视频号下载-windows-x86_64-v0.94.${{ github.run_number }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WxChannelsDownload-windows-x86_64-v0.94.${{ github.run_number }}
-          path: WxChannelsDownload-windows-x86_64-v0.94.${{ github.run_number }}.zip
+          name: 视频号下载-windows-x86_64-v0.94.${{ github.run_number }}
+          path: 视频号下载-windows-x86_64-v0.94.${{ github.run_number }}.zip
           if-no-files-found: error
