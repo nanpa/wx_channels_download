@@ -122,6 +122,7 @@ func (c *APIClient) SetupRoutes() {
 	c.engine.DELETE("/mcp", c.handle_mcp_transport)
 	c.engine.POST("/api/service/start", c.handle_service_start)
 	c.engine.POST("/api/service/stop", c.handle_service_stop)
+	c.engine.POST("/api/application/shutdown", c.handle_application_shutdown)
 	c.engine.POST("/api/service/config", c.handle_service_config_update)
 	c.engine.GET("/api/proxy/status", c.handle_proxy_status)
 	c.engine.POST("/api/proxy/config", c.handle_proxy_config_update)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,23 @@ import (
 
 type service_action_body struct {
 	Name string `json:"name"`
+}
+
+// Shutdown runs the normal application cleanup in the owning process, including
+// when that process is elevated and the desktop client is not.
+func (c *APIClient) handle_application_shutdown(ctx *gin.Context) {
+	host, _, err := net.SplitHostPort(ctx.Request.RemoteAddr)
+	if err != nil || !net.ParseIP(host).IsLoopback() {
+		ctx.AbortWithStatus(403)
+		return
+	}
+	if c.event_publisher == nil {
+		result.Err(ctx, 500, "event bus not initialized")
+		return
+	}
+	result.Ok(ctx, map[string]bool{"stopping": true})
+	ctx.Writer.Flush()
+	c.event_publisher.Publish(events.ServiceCommand{Name: "application", Action: "shutdown"})
 }
 
 type service_config_body struct {

@@ -317,6 +317,10 @@ func start(cfg *config.Config, options startOptions) error {
 	})
 	bus.Subscribe(events.TypeServiceCommand, func(event events.Event) {
 		command, ok := event.(events.ServiceCommand)
+		if ok && command.Name == "application" && command.Action == "shutdown" {
+			stop()
+			return
+		}
 		if !ok || command.Name != "api" {
 			return
 		}

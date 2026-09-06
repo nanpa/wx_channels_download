@@ -264,6 +264,23 @@ class BackendManager:
         if not self.core.is_file():
             return
 
+        if self.is_ready():
+            # The core owns cleanup and can exit itself even when elevated.
+            # A missing PID is not a reason to skip the shutdown request.
+            api_json("/api/application/shutdown", "POST", {})
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                reachable = self.is_ready(timeout=0.5)
+                pid = self._read_pid_file()
+                alive = pid is not None and self._pid_matches_core(pid)
+                child_alive = self._process is not None and self._process.poll() is None
+                if not reachable and not alive and not child_alive:
+                    self._process = None
+                    self._close_log()
+                    return
+                time.sleep(0.25)
+            raise RuntimeError("内核尚未完成安全退出，请稍后重试。请保留日志，不要删除 PID 文件。")
+
         # Stop the interceptor first so Windows' system proxy is restored before
         # the server process is terminated by the existing CLI stop command.
         if self.is_ready():
@@ -797,12 +814,17 @@ class Launcher(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def refresh_status(self) -> None:
-        if not self._closing and self.backend.is_ready(timeout=0.25):
+        if not self._closing and not self._initializing and self.backend.is_ready(timeout=0.25):
             self.status.set("运行中")
             self.refresh_tasks()
         self.after(1500, self.refresh_status)
 
     def on_close(self) -> None:
+        if self._closing:
+            return
+        if self._initializing:
+            messagebox.showinfo("正在初始化", "请等待初始化结束后再退出。")
+            return
         if self.backend.is_ready():
             self._closing = True
             self.withdraw()
