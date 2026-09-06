@@ -743,8 +743,23 @@ class Launcher(tk.Tk):
                 # Start the elevated core only after the normal core has
                 # released port 2022.  The core's in-process elevation path
                 # can otherwise race its original API process on Windows.
+                #
+                # Prefer the core's config API: recent core releases rewrite
+                # YAML with their own formatting, so persisting these values
+                # through the same writer avoids a GUI/core formatting race.
+                try:
+                    api_json("/api/service/config", "POST", {
+                        "values": {
+                            "proxy.enabled": True,
+                            "proxy.system": True,
+                            "proxy.skipInstallRootCert": False,
+                        },
+                    })
+                except Exception:
+                    # Keep source-mode compatibility with older cores that do
+                    # not expose the config endpoint.
+                    self.backend.set_capture_enabled(True)
                 self.backend.stop()
-                self.backend.set_capture_enabled(True)
                 self.backend.start(as_admin=True)
                 deadline = time.monotonic() + 60
                 while not self.backend.is_ready(timeout=0.5) and time.monotonic() < deadline:
